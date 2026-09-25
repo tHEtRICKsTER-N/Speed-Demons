@@ -1,0 +1,8 @@
+# Keep LF line endings in the repo and in working copies on every OS
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+
+# Bundled third-party code: skip in diffs and GitHub language stats
+vendor/** linguist-vendored -diff

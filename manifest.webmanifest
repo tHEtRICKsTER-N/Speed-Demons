@@ -1,0 +1,14 @@
+{
+  "name": "Speed Demons",
+  "short_name": "Speed Demons",
+  "description": "A casual 3D stunt racer with loops, jumps and flips.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b1026",
+  "theme_color": "#0b1026",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

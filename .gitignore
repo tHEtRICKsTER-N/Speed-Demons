@@ -1,0 +1,38 @@
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local tool settings (Claude Code launch config, graphify output)
+.claude/
+graphify-out/
+
+# Node / tooling, in case a build step or linter is added later
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+dist/
+.cache/
+
+# Python (local test server)
+__pycache__/
+*.pyc
+
+# Logs, env files and scratch
+*.log
+.env
+.env.*
+tmp/
+temp/

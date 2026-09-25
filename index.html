@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1026">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Speed Demons">
+<title>Speed Demons</title>
+<script>
+  // Browsers block the app manifest on file:// (a CORS error), so only link it when served over http(s).
+  if (/^https?:$/.test(location.protocol)) {
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = 'manifest.webmanifest';
+    document.head.appendChild(link);
+  }
+</script>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+  <div id="vignette"></div>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud">
+    <div class="hud-box hud-tl">
+      <div class="hud-pos"><span id="h-pos">5</span><sup id="h-pos-suf">th</sup><small id="h-pos-of">/5</small></div>
+    </div>
+    <div class="hud-tc">
+      <div id="h-time" class="hud-time">0:00.00</div>
+      <div class="progress"><div id="h-progress" class="progress-track"></div></div>
+    </div>
+    <div class="hud-box hud-tr">
+      <div class="hud-label">STUNTS</div>
+      <div id="h-score" class="hud-score">0</div>
+      <div id="h-combo" class="hud-combo"></div>
+    </div>
+    <button id="btn-pause" class="hud-btn" aria-label="Pause">&#10074;&#10074;</button>
+    <button id="btn-respawn" class="hud-btn hud-btn2" aria-label="Back to checkpoint">&#8634;</button>
+    <div class="hud-bottom">
+      <div class="speedo"><span id="h-speed">0</span><small>km/h</small></div>
+      <div id="nitro" class="nitro">
+        <span class="nitro-ico">&#9889;</span>
+        <div class="nitro-bar"><div id="h-nitro"></div></div>
+      </div>
+    </div>
+    <div id="h-air" class="hud-air"></div>
+  </div>
+
+  <!-- ============ Touch controls ============ -->
+  <div id="touch">
+    <div id="t-steer"><div class="tb" id="t-left">&#9664;</div><div class="tb" id="t-right">&#9654;</div></div>
+    <div id="t-actions">
+      <div class="tb small" id="t-brake"><span class="g">BRAKE</span><span class="a">&#8634;<small>FLIP</small></span></div>
+      <div class="tb big" id="t-nitro"><span class="g">&#9889;<small>NITRO</small></span><span class="a">&#8635;<small>FLIP</small></span></div>
+    </div>
+  </div>
+
+  <div id="popups"></div>
+  <div id="center-msg" class="center-msg"></div>
+
+  <!-- ============ Title ============ -->
+  <section id="screen-title" class="screen">
+    <div class="card title-card">
+      <h1 id="title-text" class="logo">Speed Demons</h1>
+      <p id="subtitle-text" class="subtitle"></p>
+      <button id="btn-play" class="btn primary big" data-primary>&#9654; Play</button>
+      <div class="row wrap">
+        <button id="btn-garage" class="btn">&#128663; Garage</button>
+        <button id="btn-howto" class="btn">How to play</button>
+      </div>
+      <p class="star-total">&#11088; <b id="star-total">0</b> stars earned</p>
+      <div class="row wrap small-row">
+        <button id="btn-sound" class="btn toggle"></button>
+        <button id="btn-music" class="btn toggle"></button>
+        <button id="btn-quality" class="btn toggle"></button>
+        <button id="btn-autogas" class="btn toggle"></button>
+        <button id="btn-fs" class="btn btn-fs">&#x26F6; Full screen</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Track select ============ -->
+  <section id="screen-tracks" class="screen">
+    <div class="card wide-card">
+      <h2>Choose a track</h2>
+      <div id="track-list" class="track-list"></div>
+      <div class="row">
+        <button id="btn-tracks-back" class="btn">Back</button>
+        <button id="btn-tracks-garage" class="btn">&#128663; Garage</button>
+        <button id="btn-race" class="btn primary big" data-primary>Race!</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Garage ============ -->
+  <section id="screen-garage" class="screen garage">
+    <div class="card garage-card">
+      <h2>Garage</h2>
+      <div id="car-list" class="car-list"></div>
+      <div id="color-list" class="color-list"></div>
+      <button id="btn-garage-done" class="btn primary" data-primary>Done</button>
+    </div>
+  </section>
+
+  <!-- ============ How to play ============ -->
+  <section id="screen-howto" class="screen">
+    <div class="card wide-card howto">
+      <h2>How to play</h2>
+      <div class="howto-grid">
+        <div class="howto-block">
+          <h3>&#9000;&#65039; Keyboard</h3>
+          <ul>
+            <li><kbd>&larr;</kbd><kbd>&rarr;</kbd> / <kbd>A</kbd><kbd>D</kbd> steer &middot; <kbd>&uarr;</kbd>/<kbd>W</kbd> gas &middot; <kbd>&darr;</kbd>/<kbd>S</kbd> brake</li>
+            <li><kbd>Space</kbd> nitro &middot; <kbd>R</kbd> back to checkpoint &middot; <kbd>Esc</kbd> pause &middot; <kbd>F</kbd> full screen</li>
+            <li><b>In the air:</b> <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> flip, <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> spin, <kbd>Q</kbd>/<kbd>E</kbd> barrel roll</li>
+          </ul>
+        </div>
+        <div class="howto-block">
+          <h3>&#128241; Phone</h3>
+          <ul>
+            <li>The car accelerates by itself. Hold <b>&#9664; &#9654;</b> to steer.</li>
+            <li><b>&#9889; NITRO</b> for speed, <b>BRAKE</b> for tight corners.</li>
+            <li><b>In the air</b> those two buttons flip you forwards and backwards, and &#9664; &#9654; spin.</li>
+          </ul>
+        </div>
+      </div>
+      <ul class="tips">
+        <li>&#127942; Land flips, spins and rolls to earn <b>stunt points</b> and fill your nitro. Chain them for a combo!</li>
+        <li>&#127919; Land on your wheels, pointing down the track. Let go early and the car lines itself up.</li>
+        <li>&#127775; Fly through gold rings and grab stars for bonus points.</li>
+        <li>&#11088; Stars: finish the race, win it, and beat the track's stunt target.</li>
+      </ul>
+      <button id="btn-howto-back" class="btn primary" data-primary>Got it!</button>
+    </div>
+  </section>
+
+  <!-- ============ Pause ============ -->
+  <section id="screen-pause" class="screen">
+    <div class="card small-card">
+      <h2>Paused</h2>
+      <button id="btn-resume" class="btn primary big" data-primary>Resume</button>
+      <button id="btn-restart" class="btn">Restart race</button>
+      <button id="btn-fs-pause" class="btn btn-fs">&#x26F6; Full screen</button>
+      <button id="btn-quit" class="btn">Quit to menu</button>
+    </div>
+  </section>
+
+  <!-- ============ Full screen help (browsers without the Fullscreen API, e.g. iPhone) ============ -->
+  <section id="screen-fs-help" class="screen">
+    <div class="card small-card">
+      <h2>Full screen</h2>
+      <p class="fs-help">This browser doesn't let web pages go full screen.</p>
+      <p class="fs-help">On iPhone, tap <b>Share</b> &rarr; <b>Add to Home Screen</b>, then open <b>Speed Demons</b> from your home screen to play full screen.</p>
+      <button id="btn-fs-help-back" class="btn primary" data-primary>Got it</button>
+    </div>
+  </section>
+
+  <!-- ============ Results ============ -->
+  <section id="screen-results" class="screen">
+    <div class="card results-card">
+      <div id="res-place" class="res-place">1st</div>
+      <div id="res-stars" class="res-stars"></div>
+      <p id="res-msg" class="res-msg"></p>
+      <div class="res-stats">
+        <div><span>Time</span><b id="res-time"></b></div>
+        <div><span>Stunt score</span><b id="res-score"></b></div>
+        <div><span>Target</span><b id="res-target"></b></div>
+      </div>
+      <p id="res-unlock" class="res-unlock"></p>
+      <ol id="res-table" class="res-table"></ol>
+      <div class="row wrap">
+        <button id="btn-next" class="btn primary" data-primary>Next track</button>
+        <button id="btn-retry" class="btn">Retry</button>
+        <button id="btn-res-menu" class="btn">Menu</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Mobile start gate ============ -->
+  <section id="gate" class="gate">
+    <div class="gate-logo">&#127950;&#65039;</div>
+    <h1 id="gate-title" class="gate-title">Speed Demons</h1>
+    <button id="btn-gate" class="btn primary big">&#9654; Play in full screen</button>
+    <p id="gate-hint" class="gate-hint"></p>
+    <button id="btn-gate-skip" class="gate-skip">Continue without full screen</button>
+  </section>
+
+  <div id="loading"><div class="spinner"></div><p id="loading-text">Loading&hellip;</p></div>
+</div>
+<noscript><p style="color:#fff;padding:20px">This game needs JavaScript.</p></noscript>
+<!-- Plain scripts (not ES modules) so the game also runs when index.html is opened straight from disk. -->
+<script src="vendor/three.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/input.js"></script>
+<script src="js/track.js"></script>
+<script src="js/tracks.js"></script>
+<script src="js/cars.js"></script>
+<script src="js/world.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
