@@ -72,6 +72,7 @@ class PlayerCar {
     this.finished = false;
     this.finishTime = 0;
     this.score = 0;
+    this.coins = 0;
     this.combo = 0;
     this.comboT = 0;
     this.ringSide = [];
@@ -109,7 +110,7 @@ class PlayerCar {
     const type = this.type;
     let f = tr.frameAt(this.s, this.f);
     this.boosting = inp.nitro && this.nitro > 0;
-    if (this.boosting) this.nitro = Math.max(0, this.nitro - 24 * dt);
+    if (this.boosting) this.nitro = Math.max(0, this.nitro - 24 * (type.nitroDrain || 1) * dt);
     const top = type.top * (this.boosting ? 1.25 : 1) * (this.padT > 0 ? 1.2 : 1);
     let a = 0;
     if (inp.gas) a += type.accel * clamp(1 - this.v / top, 0, 1);
@@ -269,11 +270,12 @@ class PlayerCar {
     const quick = this.airTime < 0.25;
     this.s = clamp(i * STEP + along, 0, tr.length - 1);
     this.d = clamp(lat, -(tr.w[i] - 1.05), tr.w[i] - 1.05);
-    if (!quick && (align < 0.3 || headingDot < 0.2)) {
+    const tol = this.type.landTol || 1; // monster trucks shrug off crooked landings
+    if (!quick && (align < 0.3 / tol || headingDot < 0.2 / tol)) {
       this.crash();
       return;
     }
-    const clean = align > 0.92 && headingDot > 0.92;
+    const clean = align > 1 - 0.08 * tol && headingDot > 1 - 0.08 * tol;
     this.v = Math.max(0, this.vel.dot(T)) * (quick || clean ? 1 : 0.82);
     this.vd = this.vel.dot(R) * 0.3;
     this.heading = Math.atan2(headingSide, headingDot) * 0.6;
@@ -310,9 +312,13 @@ class PlayerCar {
       }
       total = Math.round(tricks.reduce((s, t) => s + t.pts, 0) * multiplier);
       this.score += total;
-      this.nitro = Math.min(100, this.nitro + total / 25);
+      this.gainNitro(total / 25);
     }
     this.emit('land', { impact, tricks, total, multiplier, clean, trickCount });
+  }
+
+  gainNitro(n) {
+    this.nitro = Math.min(100, this.nitro + n * (this.type.nitroGain || 1));
   }
 
   /* ---------------------------------------------------------------- crash / respawn */
@@ -374,13 +380,14 @@ class PlayerCar {
   checkPickups() {
     const tr = this.track;
     const c = tv3.set(0, 0.7, 0).applyQuaternion(this.quat).add(this.pos);
-    for (const st of tr.stars) {
+    for (const st of tr.coins) {
       if (st.taken || Math.abs(st.s - this.s) > 8) continue;
       if (st.pos.distanceToSquared(c) < 2.6 * 2.6) {
         st.taken = true;
+        this.coins++;
         this.score += 50;
-        this.nitro = Math.min(100, this.nitro + 6);
-        this.emit('star', { pos: st.pos });
+        this.gainNitro(6);
+        this.emit('coin', { pos: st.pos });
       }
     }
     tr.rings.forEach((r, k) => {
@@ -391,7 +398,7 @@ class PlayerCar {
       if (tv.addScaledVector(r.dir, -side).length() < r.r) {
         this.ringsTaken.add(k);
         this.score += 250;
-        this.nitro = Math.min(100, this.nitro + 20);
+        this.gainNitro(20);
         this.emit('ring', { pos: r.pos });
       }
     });

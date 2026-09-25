@@ -31,7 +31,7 @@ class TrackBuilder {
     this.finishS = null;
     this.checkpoints = [];
     this.pads = [];
-    this.starList = [];
+    this.coinList = [];
     this.rings = [];
     this.features = []; // {s0, s1, kind} - AI uses these to keep speed up
     this._emit(false);
@@ -198,14 +198,14 @@ class TrackBuilder {
     return this;
   }
 
-  // A trail of stars starting a few metres ahead. pattern: line | weave | diag
-  stars(count, spacing = 8, pattern = 'line', d = 0) {
+  // A trail of coins starting a few metres ahead. pattern: line | weave | diag
+  coins(count, spacing = 8, pattern = 'line', d = 0) {
     for (let k = 0; k < count; k++) {
       const t = count > 1 ? k / (count - 1) : 0;
       let dd = d;
       if (pattern === 'weave') dd = d + Math.sin(t * Math.PI * 2) * 2.8;
       else if (pattern === 'diag') dd = lerp(-3, 3, t) * (d < 0 ? -1 : 1);
-      this.starList.push({ s: this.len + 6 + k * spacing, d: dd });
+      this.coinList.push({ s: this.len + 6 + k * spacing, d: dd });
     }
     return this;
   }
@@ -295,7 +295,7 @@ class Track {
     this.features = b.features;
 
     const f = makeFrame();
-    this.stars = b.starList
+    this.coins = b.coinList
       .filter((st) => st.s < this.finishS && !this.gap[this.index(st.s)])
       .map((st) => {
         this.frameAt(st.s, f);
@@ -477,18 +477,12 @@ function roadStrip(track, s0, s1, d0, d1, lift, vScale) {
   return g;
 }
 
-function starGeometry() {
-  const shape = new THREE.Shape();
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 ? 0.42 : 1;
-    const a = (i / 10) * Math.PI * 2 + Math.PI / 2;
-    const x = Math.cos(a) * r;
-    const y = Math.sin(a) * r;
-    if (i === 0) shape.moveTo(x, y);
-    else shape.lineTo(x, y);
-  }
-  const g = new THREE.ExtrudeGeometry(shape, { depth: 0.25, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08, bevelSegments: 1 });
-  g.center();
+// A coin with a raised rim, standing up and facing down the track.
+function coinGeometry() {
+  const prof = [[0, -0.07], [0.6, -0.07], [0.63, -0.12], [0.76, -0.12], [0.8, 0], [0.76, 0.12], [0.63, 0.12], [0.6, 0.07], [0, 0.07]];
+  const g = new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 28);
+  g.rotateX(Math.PI / 2);
+  g.computeVertexNormals();
   return g;
 }
 
@@ -670,10 +664,10 @@ function buildTrackMesh(track, theme, opts = {}) {
     return m;
   });
 
-  // ---- collectible stars (instanced, animated every frame)
-  const starMesh = new THREE.InstancedMesh(starGeometry(), new THREE.MeshStandardMaterial({ color: '#ffe066', emissive: '#ffb703', emissiveIntensity: 0.8, metalness: 0.3, roughness: 0.35 }), Math.max(1, track.stars.length));
-  starMesh.count = track.stars.length;
-  group.add(starMesh);
+  // ---- collectible coins (instanced, animated every frame)
+  const coinMesh = new THREE.InstancedMesh(coinGeometry(), new THREE.MeshStandardMaterial({ color: '#ffc933', emissive: '#c77800', emissiveIntensity: 0.55, metalness: 0.65, roughness: 0.28 }), Math.max(1, track.coins.length));
+  coinMesh.count = track.coins.length;
+  group.add(coinMesh);
 
   const mtx = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -682,7 +676,7 @@ function buildTrackMesh(track, theme, opts = {}) {
   const yAxis = new V3(0, 1, 0);
   const ptmp = new V3();
   const basis = new THREE.Matrix4();
-  const starBase = track.stars.map((st) => {
+  const coinBase = track.coins.map((st) => {
     const f = track.frameAt(st.s, makeFrame());
     basis.makeBasis(f.R, f.N, f.T.clone().negate());
     return new THREE.Quaternion().setFromRotationMatrix(basis);
@@ -693,18 +687,18 @@ function buildTrackMesh(track, theme, opts = {}) {
     update(dt, time) {
       padTex.offset.y -= dt * 1.6;
       for (const m of ringMeshes) m.rotateZ(dt * 0.8);
-      track.stars.forEach((st, k) => {
+      track.coins.forEach((st, k) => {
         if (st.taken) {
           mtx.makeScale(0, 0, 0);
         } else {
-          qs.setFromAxisAngle(yAxis, time * 2.5 + k);
-          q.copy(starBase[k]).multiply(qs);
+          qs.setFromAxisAngle(yAxis, time * 3 + k * 0.4);
+          q.copy(coinBase[k]).multiply(qs);
           ptmp.copy(st.pos).addScaledVector(st.N, Math.sin(time * 3 + k) * 0.15);
-          mtx.compose(ptmp, q, scl.setScalar(0.75));
+          mtx.compose(ptmp, q, scl.setScalar(1));
         }
-        starMesh.setMatrixAt(k, mtx);
+        coinMesh.setMatrixAt(k, mtx);
       });
-      starMesh.instanceMatrix.needsUpdate = true;
+      coinMesh.instanceMatrix.needsUpdate = true;
     },
   };
 }

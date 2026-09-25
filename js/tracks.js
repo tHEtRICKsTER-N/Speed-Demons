@@ -1,4 +1,4 @@
-/* Visual themes and the four track layouts. */
+/* Visual themes, worlds and the twelve track layouts. */
 (() => {
 'use strict';
 const SD = (window.SD ||= {});
@@ -47,37 +47,114 @@ const THEMES = {
   },
 };
 
+// Worlds group the tracks in the menu, in unlock order.
+const WORLDS = [
+  { theme: 'day', name: 'Sky Islands' },
+  { theme: 'sunset', name: 'Sunset Coast' },
+  { theme: 'candy', name: 'Candy Clouds' },
+  { theme: 'night', name: 'Neon Nights' },
+];
+
+// ai: rival pace (fraction of 52 m/s). target: stunt score needed for the third star.
 const TRACKS = [
   {
     id: 'rookie',
     name: 'Sky Rookie',
     theme: 'day',
     desc: 'Rolling hills and your first big jumps.',
+    ai: 0.84,
     target: 3000,
     build(b) {
       b.straight(110);
-      b.stars(6, 8, 'line', 0);
+      b.coins(6, 8, 'line', 0);
       b.slope(90, 8);
       b.turn(35, 150);
       b.straight(40).checkpoint();
       b.pad(0).straight(45);
       b.ramp(18, 4).jump({ gap: 22, land: 85 });
-      b.straight(30).stars(7, 7, 'weave');
+      b.straight(30).coins(7, 7, 'weave');
       b.turn(-60, 120);
       b.slope(110, 12);
       b.straight(30).checkpoint();
       b.turn(40, 130);
-      b.stars(6, 8, 'line', -2.5);
+      b.coins(6, 8, 'line', -2.5);
       b.slope(80, -8);
       b.pad(0).straight(45);
       b.ramp(20, 4.5).jump({ gap: 26, land: 95 });
       b.straight(40).checkpoint();
       b.turn(-45, 140);
       b.slope(70, 8).slope(70, -8);
-      b.stars(8, 8, 'weave');
+      b.coins(8, 8, 'weave');
       b.turn(50, 110, 16);
       b.straight(30).pad(0).straight(45);
       b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(60).finish().straight(170);
+    },
+  },
+  {
+    id: 'hopper',
+    name: 'Cloud Hopper',
+    theme: 'day',
+    desc: 'Back-to-back jumps and your first loop.',
+    ai: 0.87,
+    target: 3400,
+    build(b) {
+      b.straight(110);
+      b.coins(8, 8, 'line', 0);
+      b.slope(80, 6);
+      b.turn(-30, 160);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(45);
+      b.ramp(18, 4).jump({ gap: 22, land: 85 });
+      b.straight(25).coins(6, 8, 'weave');
+      b.pad(0).straight(40);
+      b.ramp(20, 4.5).jump({ gap: 26, land: 95 });
+      b.straight(30).checkpoint();
+      b.turn(55, 120);
+      b.coins(7, 8, 'line', 2.5);
+      b.slope(90, -10);
+      b.turn(-40, 140);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(50);
+      b.loop(14, 12);
+      b.straight(40).coins(8, 8, 'weave');
+      b.slope(60, 8).slope(60, -8);
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(60).finish().straight(170);
+    },
+  },
+  {
+    id: 'island',
+    name: 'Island Dash',
+    theme: 'day',
+    desc: 'Walled S-bends between the islands.',
+    ai: 0.89,
+    target: 3800,
+    build(b) {
+      b.straight(110);
+      b.turn(40, 130);
+      b.coins(6, 8, 'line', -2.5);
+      b.straight(20).checkpoint();
+      b.walls(true).width(5).turn(-60, 80, 18).turn(60, 80, 18).width(6).walls(false);
+      b.straight(30).coins(6, 8, 'weave');
+      b.pad(0).straight(45);
+      b.ramp(20, 4.5).jump({ gap: 26, land: 95 });
+      b.straight(20).checkpoint();
+      b.slope(100, 14);
+      b.turn(-45, 120);
+      b.pad(0).straight(50);
+      b.loop(15, -13);
+      b.straight(40).checkpoint();
+      b.coins(8, 8, 'diag', 1);
+      b.turn(35, 150);
+      b.slope(80, -10);
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(20).checkpoint();
+      b.walls(true).width(5).turn(55, 75, 18).turn(-55, 75, 18).width(6).walls(false);
+      b.pad(0).straight(45);
+      b.ramp(20, 4.5).jump({ gap: 26, land: 95 });
       b.straight(60).finish().straight(170);
     },
   },
@@ -86,6 +163,7 @@ const TRACKS = [
     name: 'Sunset Loops',
     theme: 'sunset',
     desc: 'Loop-the-loops and a walled S-bend.',
+    ai: 0.9,
     target: 2800,
     build(b) {
       b.straight(110);
@@ -94,7 +172,7 @@ const TRACKS = [
       b.straight(20).checkpoint();
       b.pad(0).straight(55);
       b.loop(15, 13);
-      b.straight(40).stars(6, 8, 'line', 0);
+      b.straight(40).coins(6, 8, 'line', 0);
       b.turn(50, 120);
       b.pad(0).straight(40);
       b.ramp(20, 4.5).jump({ gap: 26, land: 95 });
@@ -105,7 +183,7 @@ const TRACKS = [
       b.pad(0).straight(55);
       b.loop(16, -14);
       b.straight(40).turn(-40, 130);
-      b.stars(8, 8, 'weave');
+      b.coins(8, 8, 'weave');
       b.slope(70, -8);
       b.pad(0).straight(40);
       b.ramp(22, 5).jump({ gap: 30, land: 110 });
@@ -118,10 +196,83 @@ const TRACKS = [
     },
   },
   {
+    id: 'twilight',
+    name: 'Twilight Twister',
+    theme: 'sunset',
+    desc: 'A double loop, then a big leap.',
+    ai: 0.92,
+    target: 3400,
+    build(b) {
+      b.straight(110);
+      b.slope(70, 8);
+      b.turn(45, 120);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(55);
+      b.loop(15, 13);
+      b.straight(20).pad(0).straight(50);
+      b.loop(15, -13);
+      b.straight(40).coins(8, 8, 'weave');
+      b.turn(-50, 110);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(40);
+      b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(30).coins(6, 8, 'line', 2.5);
+      b.walls(true).width(5).turn(70, 70, 18).turn(-70, 70, 18).width(6).walls(false);
+      b.straight(20).checkpoint();
+      b.slope(100, -14);
+      b.turn(40, 140);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 34, land: 115 });
+      b.straight(30).checkpoint();
+      b.coins(8, 8, 'weave');
+      b.slope(60, 9).slope(60, -9);
+      b.pad(0).straight(50);
+      b.loop(16, 14);
+      b.straight(70).finish().straight(170);
+    },
+  },
+  {
+    id: 'gauntlet',
+    name: 'Golden Gauntlet',
+    theme: 'sunset',
+    desc: 'Four jumps and a tight walled chicane.',
+    ai: 0.94,
+    target: 4600,
+    build(b) {
+      b.straight(110);
+      b.turn(-35, 150);
+      b.coins(8, 8, 'line', 0);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(45);
+      b.ramp(20, 4.5).jump({ gap: 26, land: 95 });
+      b.straight(20);
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(20).checkpoint();
+      b.walls(true).width(4.8).turn(-65, 70, 20).turn(65, 70, 20).turn(-40, 90, 16).width(6).walls(false);
+      b.slope(110, 16);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(55);
+      b.loop(16, -14);
+      b.straight(40).coins(8, 8, 'weave');
+      b.turn(50, 120);
+      b.slope(80, -12);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(30).checkpoint();
+      b.turn(-40, 140);
+      b.coins(6, 8, 'diag', -1);
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 32, land: 110 });
+      b.straight(70).finish().straight(170);
+    },
+  },
+  {
     id: 'candy',
     name: 'Candy Corkscrew',
     theme: 'candy',
     desc: 'Barrel-roll corkscrews and huge air.',
+    ai: 0.95,
     target: 3800,
     build(b) {
       b.straight(110);
@@ -129,7 +280,7 @@ const TRACKS = [
       b.straight(20).checkpoint();
       b.pad(0).straight(40);
       b.corkscrew(80, 1);
-      b.straight(30).stars(6, 8);
+      b.straight(30).coins(6, 8);
       b.slope(90, 14);
       b.turn(-55, 110);
       b.pad(0).straight(40);
@@ -143,7 +294,7 @@ const TRACKS = [
       b.straight(20).checkpoint();
       b.slope(100, 18);
       b.turn(-50, 120);
-      b.stars(8, 8, 'weave');
+      b.coins(8, 8, 'weave');
       b.pad(0).straight(45);
       b.ramp(24, 6).jump({ gap: 36, land: 120 });
       b.straight(30).checkpoint();
@@ -155,10 +306,82 @@ const TRACKS = [
     },
   },
   {
+    id: 'sugar',
+    name: 'Sugar Rush',
+    theme: 'candy',
+    desc: 'Corkscrew, loop, corkscrew. Hold on!',
+    ai: 0.97,
+    target: 3800,
+    build(b) {
+      b.straight(110);
+      b.coins(8, 8, 'weave');
+      b.turn(-35, 140);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(40);
+      b.corkscrew(80, -1);
+      b.straight(30).coins(6, 8, 'line', 0);
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(20).checkpoint();
+      b.slope(90, 12);
+      b.turn(55, 110);
+      b.pad(0).straight(50);
+      b.loop(15, 13);
+      b.straight(20).corkscrew(70, 1);
+      b.straight(20).checkpoint();
+      b.walls(true).width(5).turn(-65, 75, 20).turn(65, 75, 20).width(6).walls(false);
+      b.coins(8, 8, 'weave');
+      b.slope(80, -12);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(70).finish().straight(170);
+    },
+  },
+  {
+    id: 'lollipop',
+    name: 'Lollipop Leap',
+    theme: 'candy',
+    desc: 'Five big jumps. Flip on every one.',
+    ai: 0.98,
+    target: 6000,
+    build(b) {
+      b.straight(110);
+      b.turn(30, 150);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 30, land: 110 });
+      b.straight(20).coins(6, 8, 'line', 0);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 34, land: 115 });
+      b.straight(20).checkpoint();
+      b.turn(-50, 120);
+      b.pad(0).straight(40);
+      b.corkscrew(80, 1);
+      b.straight(30).coins(8, 8, 'weave');
+      b.slope(100, 16);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(50);
+      b.loop(16, -14);
+      b.straight(30);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(30).checkpoint();
+      b.walls(true).width(5).turn(60, 80, 20).turn(-60, 80, 20).width(6).walls(false);
+      b.slope(70, -10);
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 32, land: 110 });
+      b.straight(20);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(70).finish().straight(170);
+    },
+  },
+  {
     id: 'neon',
     name: 'Neon Nights',
     theme: 'night',
     desc: 'Everything at once, under the stars.',
+    ai: 1.0,
     target: 4600,
     build(b) {
       b.straight(110);
@@ -168,7 +391,7 @@ const TRACKS = [
       b.pad(0).straight(50);
       b.loop(15, 13);
       b.straight(20).corkscrew(70, 1);
-      b.straight(30).stars(6, 8);
+      b.straight(30).coins(6, 8);
       b.pad(0).straight(40);
       b.ramp(22, 5).jump({ gap: 30, land: 110 });
       b.straight(20).checkpoint();
@@ -182,13 +405,93 @@ const TRACKS = [
       b.ramp(24, 6).jump({ gap: 36, land: 120 });
       b.straight(20).checkpoint();
       b.turn(-45, 120);
-      b.stars(8, 8, 'weave');
+      b.coins(8, 8, 'weave');
       b.corkscrew(80, -1);
       b.straight(30).slope(70, 10).slope(70, -10);
       b.pad(0).straight(50);
       b.loop(15, 13);
       b.straight(30).pad(0).straight(40);
       b.ramp(22, 5).jump({ gap: 32, land: 110 });
+      b.straight(70).finish().straight(170);
+    },
+  },
+  {
+    id: 'laser',
+    name: 'Laser Loop',
+    theme: 'night',
+    desc: 'Loops, corkscrews and a narrow neon chicane.',
+    ai: 1.02,
+    target: 4200,
+    build(b) {
+      b.straight(110);
+      b.slope(80, -8);
+      b.turn(45, 120);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(50);
+      b.loop(15, 13);
+      b.straight(20).pad(0).straight(50);
+      b.loop(15, -13);
+      b.straight(20).checkpoint();
+      b.coins(8, 8, 'weave');
+      b.walls(true).width(4.6).turn(-70, 70, 20).turn(70, 70, 20).width(6).walls(false);
+      b.pad(0).straight(40);
+      b.corkscrew(80, 1);
+      b.straight(30).checkpoint();
+      b.pad(0).straight(40);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(30).coins(6, 8, 'diag', 1);
+      b.slope(110, 18);
+      b.turn(-45, 120);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(50);
+      b.loop(17, 15);
+      b.straight(30).corkscrew(70, -1);
+      b.straight(30).pad(0).straight(40);
+      b.ramp(22, 5).jump({ gap: 32, land: 110 });
+      b.straight(70).finish().straight(170);
+    },
+  },
+  {
+    id: 'demon',
+    name: "Demon's Drop",
+    theme: 'night',
+    desc: 'The final run: a huge drop and every trick in the book.',
+    ai: 1.04,
+    target: 5600,
+    build(b) {
+      b.straight(110);
+      b.slope(80, 12);
+      b.turn(-40, 120);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(50);
+      b.loop(15, 13);
+      b.straight(20).corkscrew(70, 1);
+      b.straight(30).coins(8, 8, 'weave');
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(20).checkpoint();
+      b.walls(true).width(4.6).turn(70, 70, 20).turn(-70, 70, 20).turn(50, 80, 18).width(6).walls(false);
+      b.slope(130, -22);
+      b.straight(20).checkpoint();
+      b.pad(0).straight(50);
+      b.loop(17, -15);
+      b.straight(20).pad(0).straight(50);
+      b.loop(15, 13);
+      b.straight(30).coins(8, 8, 'line', 0);
+      b.turn(-45, 120);
+      b.pad(0).straight(40);
+      b.corkscrew(90, -1);
+      b.straight(30).checkpoint();
+      b.pad(0).straight(45);
+      b.ramp(22, 5).jump({ gap: 32, land: 110 });
+      b.straight(20);
+      b.pad(0).straight(45);
+      b.ramp(24, 6).jump({ gap: 36, land: 120 });
+      b.straight(20).checkpoint();
+      b.slope(70, 10).slope(70, -10);
+      b.coins(8, 8, 'weave');
+      b.pad(0).straight(50);
+      b.loop(16, 14);
       b.straight(70).finish().straight(170);
     },
   },
@@ -204,5 +507,5 @@ function buildTrack(def) {
   return cache.get(def.id);
 }
 
-SD.tracks = { THEMES, TRACKS, buildTrack };
+SD.tracks = { THEMES, WORLDS, TRACKS, buildTrack };
 })();

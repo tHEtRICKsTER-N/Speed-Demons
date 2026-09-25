@@ -8,10 +8,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Speed Demons">
+<!-- auto | web | poki | crazygames - tools/package.mjs sets this for each portal build -->
+<meta name="sd-platform" content="auto">
 <title>Speed Demons</title>
 <script>
-  // Browsers block the app manifest on file:// (a CORS error), so only link it when served over http(s).
-  if (/^https?:$/.test(location.protocol)) {
+  // Browsers block the app manifest on file:// (a CORS error), and portals don't use it:
+  // only link it on our own site.
+  if (/^https?:$/.test(location.protocol) && document.querySelector('meta[name="sd-platform"]').content !== 'poki' && document.querySelector('meta[name="sd-platform"]').content !== 'crazygames') {
     const link = document.createElement('link');
     link.rel = 'manifest';
     link.href = 'manifest.webmanifest';
@@ -20,24 +23,24 @@
 </script>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="app">
   <canvas id="game"></canvas>
+  <div id="speedlines"></div>
   <div id="vignette"></div>
 
   <!-- ============ HUD ============ -->
   <div id="hud">
     <div class="hud-box hud-tl">
       <div class="hud-pos"><span id="h-pos">5</span><sup id="h-pos-suf">th</sup><small id="h-pos-of">/5</small></div>
+      <div class="hud-coins"><span class="coin-ico"></span><b id="h-coins">0</b></div>
     </div>
     <div class="hud-tc">
       <div id="h-time" class="hud-time">0:00.00</div>
       <div class="progress"><div id="h-progress" class="progress-track"></div></div>
+      <div id="h-draft" class="hud-draft">SLIPSTREAM</div>
     </div>
     <div class="hud-box hud-tr">
       <div class="hud-label">STUNTS</div>
@@ -54,6 +57,7 @@
       </div>
     </div>
     <div id="h-air" class="hud-air"></div>
+    <div id="hint" class="hint"></div>
   </div>
 
   <!-- ============ Touch controls ============ -->
@@ -67,18 +71,22 @@
 
   <div id="popups"></div>
   <div id="center-msg" class="center-msg"></div>
+  <div id="toast" class="toast"></div>
 
   <!-- ============ Title ============ -->
   <section id="screen-title" class="screen">
     <div class="card title-card">
+      <div class="wallet"><span class="coin-ico"></span><b id="title-coins">0</b></div>
       <h1 id="title-text" class="logo">Speed Demons</h1>
       <p id="subtitle-text" class="subtitle"></p>
-      <button id="btn-play" class="btn primary big" data-primary>&#9654; Play</button>
+      <button id="btn-play" class="btn primary big" data-primary>&#9654; Race</button>
+      <p id="play-next" class="play-next"></p>
       <div class="row wrap">
+        <button id="btn-tracks" class="btn">&#127937; Tracks</button>
         <button id="btn-garage" class="btn">&#128663; Garage</button>
         <button id="btn-howto" class="btn">How to play</button>
       </div>
-      <p class="star-total">&#11088; <b id="star-total">0</b> stars earned</p>
+      <p class="star-total">&#11088; <b id="star-total">0</b> stars</p>
       <div class="row wrap small-row">
         <button id="btn-sound" class="btn toggle"></button>
         <button id="btn-music" class="btn toggle"></button>
@@ -94,7 +102,7 @@
     <div class="card wide-card">
       <h2>Choose a track</h2>
       <div id="track-list" class="track-list"></div>
-      <div class="row">
+      <div class="row sticky-row">
         <button id="btn-tracks-back" class="btn">Back</button>
         <button id="btn-tracks-garage" class="btn">&#128663; Garage</button>
         <button id="btn-race" class="btn primary big" data-primary>Race!</button>
@@ -105,10 +113,16 @@
   <!-- ============ Garage ============ -->
   <section id="screen-garage" class="screen garage">
     <div class="card garage-card">
-      <h2>Garage</h2>
+      <div class="garage-head">
+        <h2>Garage</h2>
+        <div class="wallet"><span class="coin-ico"></span><b id="garage-coins">0</b></div>
+        <button id="btn-garage-done" class="btn primary garage-done" data-primary>Done</button>
+      </div>
       <div id="car-list" class="car-list"></div>
+      <div id="car-info" class="car-info"></div>
+      <div id="car-action" class="car-action"></div>
+      <div id="upgrade-list" class="upgrade-list"></div>
       <div id="color-list" class="color-list"></div>
-      <button id="btn-garage-done" class="btn primary" data-primary>Done</button>
     </div>
   </section>
 
@@ -121,7 +135,7 @@
           <h3>&#9000;&#65039; Keyboard</h3>
           <ul>
             <li><kbd>&larr;</kbd><kbd>&rarr;</kbd> / <kbd>A</kbd><kbd>D</kbd> steer &middot; <kbd>&uarr;</kbd>/<kbd>W</kbd> gas &middot; <kbd>&darr;</kbd>/<kbd>S</kbd> brake</li>
-            <li><kbd>Space</kbd> nitro &middot; <kbd>R</kbd> back to checkpoint &middot; <kbd>Esc</kbd> pause &middot; <kbd>F</kbd> full screen</li>
+            <li><kbd>Space</kbd> nitro &middot; <kbd>R</kbd> back to checkpoint &middot; <kbd>Esc</kbd> pause &middot; <kbd class="fs-only">F</kbd><span class="fs-only"> full screen</span></li>
             <li><b>In the air:</b> <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> flip, <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> spin, <kbd>Q</kbd>/<kbd>E</kbd> barrel roll</li>
           </ul>
         </div>
@@ -135,10 +149,10 @@
         </div>
       </div>
       <ul class="tips">
-        <li>&#127942; Land flips, spins and rolls to earn <b>stunt points</b> and fill your nitro. Chain them for a combo!</li>
-        <li>&#127919; Land on your wheels, pointing down the track. Let go early and the car lines itself up.</li>
-        <li>&#127775; Fly through gold rings and grab stars for bonus points.</li>
-        <li>&#11088; Stars: finish the race, win it, and beat the track's stunt target.</li>
+        <li>&#127942; Land flips, spins and rolls for <b>stunt points</b> and nitro. Chain them for a combo!</li>
+        <li><span class="coin-ico"></span> Grab <b>coins</b>, and earn more from stunts and your finishing place. Spend them in the <b>Garage</b> on new cars and upgrades.</li>
+        <li>&#128168; Tuck in right behind a rival to <b>slipstream</b>: it fills your nitro.</li>
+        <li>&#11088; Each track has 3 stars: finish, win, and beat the stunt target.</li>
       </ul>
       <button id="btn-howto-back" class="btn primary" data-primary>Got it!</button>
     </div>
@@ -168,25 +182,36 @@
   <!-- ============ Results ============ -->
   <section id="screen-results" class="screen">
     <div class="card results-card">
-      <div id="res-place" class="res-place">1st</div>
-      <div id="res-stars" class="res-stars"></div>
-      <p id="res-msg" class="res-msg"></p>
-      <div class="res-stats">
-        <div><span>Time</span><b id="res-time"></b></div>
-        <div><span>Stunt score</span><b id="res-score"></b></div>
-        <div><span>Target</span><b id="res-target"></b></div>
+      <div class="res-grid">
+        <div class="res-main">
+          <div id="res-place" class="res-place">1st</div>
+          <div id="res-stars" class="res-stars"></div>
+          <p id="res-msg" class="res-msg"></p>
+          <div class="res-stats">
+            <div><span>Time</span><b id="res-time"></b></div>
+            <div><span>Stunt score</span><b id="res-score"></b></div>
+            <div><span>Target</span><b id="res-target"></b></div>
+          </div>
+        </div>
+        <div class="res-side">
+          <div id="res-coins" class="res-coins"></div>
+          <ol id="res-table" class="res-table"></ol>
+        </div>
       </div>
       <p id="res-unlock" class="res-unlock"></p>
-      <ol id="res-table" class="res-table"></ol>
       <div class="row wrap">
-        <button id="btn-next" class="btn primary" data-primary>Next track</button>
+        <button id="btn-next" class="btn primary res-btn" data-primary>Next race</button>
+        <button id="btn-double" class="btn reward res-btn">&#127916; Double coins</button>
+      </div>
+      <div class="row wrap">
         <button id="btn-retry" class="btn">Retry</button>
+        <button id="btn-res-garage" class="btn">&#128663; Garage</button>
         <button id="btn-res-menu" class="btn">Menu</button>
       </div>
     </div>
   </section>
 
-  <!-- ============ Mobile start gate ============ -->
+  <!-- ============ Mobile start gate (own site only: go full screen + lock landscape) ============ -->
   <section id="gate" class="gate">
     <div class="gate-logo">&#127950;&#65039;</div>
     <h1 id="gate-title" class="gate-title">Speed Demons</h1>
@@ -202,11 +227,13 @@
 <script src="vendor/three.min.js"></script>
 <script src="js/config.js"></script>
 <script src="js/util.js"></script>
+<script src="js/platform.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/input.js"></script>
 <script src="js/track.js"></script>
 <script src="js/tracks.js"></script>
 <script src="js/cars.js"></script>
+<script src="js/economy.js"></script>
 <script src="js/world.js"></script>
 <script src="js/fx.js"></script>
 <script src="js/physics.js"></script>

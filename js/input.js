@@ -13,13 +13,17 @@ class Input {
     this.autoGas = false;
     this.inGame = false;
     this.rotated = false; // page turned sideways with CSS (upright phone)
+    this.enabled = true; // off while a portal ad plays
     this.on = { pause: null, respawn: null, primary: null, back: null, fullscreen: null, touchDetected: null };
     this.gpPrev = {};
     this.steerPointers = new Map();
 
     window.addEventListener('keydown', (e) => {
       this.keys[e.code] = true;
-      if (this.inGame && GAME_KEYS.includes(e.code)) e.preventDefault();
+      // Never let arrows / space scroll the page hosting the game (portal iframes), but keep
+      // space working on a focused menu button.
+      const onButton = e.target && e.target.tagName === 'BUTTON';
+      if (GAME_KEYS.includes(e.code) && (this.inGame || !(e.code === 'Space' && onButton))) e.preventDefault();
       if (e.repeat) return;
       if (e.code === 'Escape' || e.code === 'KeyP') this.fire(this.inGame ? 'pause' : 'back');
       else if (e.code === 'KeyR' && this.inGame) this.fire('respawn');
@@ -39,7 +43,7 @@ class Input {
     }, { passive: true });
   }
 
-  fire(name) { if (this.on[name]) this.on[name](); }
+  fire(name) { if (this.enabled && this.on[name]) this.on[name](); }
 
   releaseAll() {
     for (const k in this.keys) this.keys[k] = false;

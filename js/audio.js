@@ -20,7 +20,7 @@ function init() {
   if (!AC) return;
   ac = new AC();
   master = ac.createGain();
-  master.gain.value = 0.85;
+  master.gain.value = muteReasons.size ? 0 : 0.85;
   master.connect(ac.destination);
   sfxBus = ac.createGain();
   sfxBus.gain.value = on.sfx ? 1 : 0;
@@ -167,7 +167,11 @@ const sfx = {
   },
   wall() { noise(0.12, { vol: 0.25, freq: 2500, type: 'bandpass', q: 2 }); },
   ring() { [1047, 1568, 2093].forEach((f, i) => tone(f, 0.2, { type: 'sine', vol: 0.12, delay: i * 0.06 })); },
-  star() { tone(1568, 0.08, { type: 'triangle', vol: 0.08 }); tone(2093, 0.12, { type: 'sine', vol: 0.08, delay: 0.05 }); },
+  coin() { tone(1976, 0.06, { type: 'square', vol: 0.045 }); tone(2637, 0.16, { type: 'square', vol: 0.045, delay: 0.06 }); },
+  buy() { [784, 988, 1175, 1568].forEach((f, i) => tone(f, 0.14, { type: 'square', vol: 0.06, delay: i * 0.06 })); },
+  deny() { tone(220, 0.16, { type: 'square', vol: 0.06, slide: 160 }); },
+  tick() { tone(2400, 0.03, { type: 'square', vol: 0.025 }); },
+  draft() { noise(0.3, { vol: 0.12, type: 'bandpass', freq: 900, slide: 2200, q: 1.2 }); },
   pad() { noise(0.5, { vol: 0.25, type: 'bandpass', freq: 400, slide: 3500, q: 2 }); },
   checkpoint() { tone(988, 0.1, { type: 'square', vol: 0.06 }); tone(1319, 0.18, { type: 'square', vol: 0.06, delay: 0.09 }); },
   whoosh() { noise(0.4, { vol: 0.2, type: 'bandpass', freq: 2500, slide: 300, q: 1.5 }); },
@@ -253,5 +257,13 @@ function setMusic(v) {
 function suspend() { if (ac && ac.state === 'running') ac.suspend(); }
 function resume() { if (ac && ac.state === 'suspended') ac.resume(); }
 
-SD.audio = { init, engineOn, engineOff, engine, sfx, setSfx, setMusic, suspend, resume };
+// Silence everything for a reason ('ad', 'platform'), on top of the player's sound settings.
+const muteReasons = new Set();
+function setMuted(reason, v) {
+  if (v) muteReasons.add(reason);
+  else muteReasons.delete(reason);
+  if (master) master.gain.setTargetAtTime(muteReasons.size ? 0 : 0.85, ac.currentTime, 0.02);
+}
+
+SD.audio = { init, engineOn, engineOff, engine, sfx, setSfx, setMusic, suspend, resume, setMuted };
 })();

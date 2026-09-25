@@ -4,11 +4,15 @@
 const SD = (window.SD ||= {});
 const { damp, rand } = SD.util;
 
-// top: m/s, accel: m/s^2, grip: lateral m/s^2, air: rotation speed multiplier, unlock: stars needed
+// top: m/s, accel: m/s^2, grip: lateral m/s^2, air: rotation speed multiplier,
+// landTol: how crooked a landing can be before it's a crash (higher = more forgiving), price: coins
 const CAR_TYPES = [
-  { id: 'racer', name: 'Racer', desc: 'Balanced and quick.', top: 52, accel: 24, grip: 27, air: 1.0, unlock: 0 },
-  { id: 'buggy', name: 'Buggy', desc: 'Grippy, with the best air control.', top: 49, accel: 27, grip: 31, air: 1.3, unlock: 3 },
-  { id: 'muscle', name: 'Muscle', desc: 'Fastest in a straight line.', top: 57, accel: 22, grip: 24, air: 0.85, unlock: 6 },
+  { id: 'racer', name: 'Racer', desc: 'Balanced and quick.', top: 52, accel: 24, grip: 27, air: 1.0, landTol: 1, price: 0 },
+  { id: 'buggy', name: 'Buggy', desc: 'Grippy, with great air control.', top: 49, accel: 27, grip: 31, air: 1.3, landTol: 1.1, price: 1200 },
+  { id: 'muscle', name: 'Muscle', desc: 'Brutal top speed.', top: 57, accel: 22, grip: 24, air: 0.85, landTol: 1, price: 2500 },
+  { id: 'monster', name: 'Stomper', desc: 'Monster truck. Lands almost anything.', top: 51, accel: 25, grip: 26, air: 1.2, landTol: 1.6, price: 5000 },
+  { id: 'formula', name: 'Bolt', desc: 'Open-wheel racer. Corners on rails.', top: 60, accel: 28, grip: 34, air: 0.8, landTol: 0.9, price: 8000 },
+  { id: 'hyper', name: 'Phantom', desc: 'Hypercar. The best at everything.', top: 63, accel: 30, grip: 31, air: 1.15, landTol: 1.15, price: 14000 },
 ];
 
 const COLORS = ['#ff3b5c', '#ff8a00', '#ffd400', '#2ec4b6', '#3a86ff', '#8338ec', '#ff4dc4', '#f1f3f5', '#2b2d42'];
@@ -39,6 +43,33 @@ const MODELS = {
     stripe: true,
     wheelR: 0.43, wheelW: 0.38, wheelX: 0.98, wheelZ: [-1.5, 1.55],
     front: -2.47, rear: 2.47, lightY: 0.6,
+  },
+  monster: {
+    body: [[-2.2, 1.05], [2.1, 1.05], [2.3, 1.3], [2.25, 1.6], [0.9, 1.65], [-2.0, 1.66], [-2.35, 1.55], [-2.35, 1.15]],
+    width: 1.9,
+    cabin: [[-1.0, 1.62], [0.75, 1.62], [0.45, 2.25], [-0.65, 2.25], [-1.15, 1.72]],
+    cabinWidth: 1.7,
+    chassis: true,
+    wheelR: 0.86, wheelW: 0.72, wheelX: 1.22, wheelZ: [-1.45, 1.45],
+    front: -2.37, rear: 2.37, lightY: 1.38,
+  },
+  formula: {
+    body: [[-2.55, 0.26], [2.1, 0.26], [2.2, 0.55], [1.25, 0.62], [0.35, 0.78], [-0.55, 0.64], [-2.3, 0.42], [-2.6, 0.32]],
+    width: 1.0,
+    open: true,
+    wings: true,
+    wheelR: 0.44, wheelW: 0.46, wheelX: 0.98, wheelZ: [-1.6, 1.45],
+    front: -2.62, rear: 2.25, lightY: 0.42,
+  },
+  hyper: {
+    body: [[-2.4, 0.28], [2.2, 0.28], [2.38, 0.5], [2.32, 0.72], [1.2, 0.8], [-0.4, 0.9], [-2.2, 0.62], [-2.46, 0.42]],
+    width: 1.96,
+    cabin: [[-0.95, 0.84], [0.95, 0.8], [0.35, 1.14], [-0.45, 1.14], [-1.15, 0.88]],
+    cabinWidth: 1.3,
+    fins: true,
+    glow: true,
+    wheelR: 0.42, wheelW: 0.36, wheelX: 0.99, wheelZ: [-1.45, 1.5],
+    front: -2.48, rear: 2.4, lightY: 0.55,
   },
 };
 
@@ -108,6 +139,39 @@ class CarModel {
       b.add(helmet);
       b.add(box(0.46, 0.14, 0.05, S.glass, 0, 1.47, -0.1));
     }
+    if (spec.chassis) {
+      // monster truck: exposed frame, axles and a roll bar
+      b.add(box(1.4, 0.35, 4.0, S.dark, 0, 0.82, 0));
+      for (const z of spec.wheelZ) b.add(box(2.3, 0.16, 0.16, S.dark, 0, spec.wheelR, z));
+      b.add(box(1.6, 0.1, 0.1, S.dark, 0, 2.05, 1.3));
+      for (const x of [-0.75, 0.75]) b.add(box(0.1, 0.45, 0.1, S.dark, x, 1.85, 1.3));
+    }
+    if (spec.open) {
+      // formula: open cockpit with a driver, nose cone and wings
+      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 12), S.white);
+      helmet.position.set(0, 0.92, 0.2);
+      b.add(helmet);
+      b.add(box(0.44, 0.12, 0.05, S.glass, 0, 0.95, -0.05));
+      b.add(box(2.1, 0.06, 0.5, this.paint, 0, 0.3, -2.3));
+      b.add(box(0.06, 0.2, 0.5, S.dark, -1.02, 0.36, -2.3));
+      b.add(box(0.06, 0.2, 0.5, S.dark, 1.02, 0.36, -2.3));
+      b.add(box(1.9, 0.08, 0.5, this.paint, 0, 1.08, 2.02));
+      b.add(box(0.1, 0.5, 0.3, S.dark, 0, 0.82, 2.0));
+      for (const x of [-0.95, 0.95]) b.add(box(0.06, 0.34, 0.55, S.dark, x, 1.0, 2.02));
+      b.add(box(1.7, 0.28, 1.6, this.paint, 0, 0.42, 0.9)); // side pods
+    }
+    if (spec.fins) {
+      for (const x of [-0.72, 0.72]) b.add(box(0.06, 0.34, 0.9, this.paint, x, 0.95, 1.7));
+      b.add(box(1.5, 0.06, 0.34, S.dark, 0, 1.12, 2.0));
+    }
+    if (spec.glow) {
+      // neon underglow in the car's colour
+      this.glowMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+      const under = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 4.6), this.glowMat);
+      under.rotation.x = -Math.PI / 2;
+      under.position.y = 0.06;
+      b.add(under);
+    }
     // lights sit just proud of the bevelled body so they're visible
     for (const x of [-0.62, 0.62]) {
       b.add(box(0.42, 0.14, 0.06, S.head, x, spec.lightY, spec.front - 0.1));
@@ -150,7 +214,7 @@ class CarModel {
     }
 
     this.root.traverse((o) => {
-      if (o.isMesh && o.material !== S.flame && o.material !== S.flameCore) o.castShadow = true;
+      if (o.isMesh && o.material !== S.flame && o.material !== S.flameCore && o.material !== this.glowMat) o.castShadow = true;
     });
     this.spin = 0;
     this.lean = 0;
@@ -161,6 +225,7 @@ class CarModel {
 
   setColor(color) {
     this.paint.color.set(color);
+    if (this.glowMat) this.glowMat.color.set(color);
   }
 
   // Visual-only kick to the suspension (landings, bumps).

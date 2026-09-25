@@ -1,11 +1,13 @@
-/* Speed Demons - boot, race flow, camera, effects, HUD and menus. */
+/* Speed Demons - boot, race flow, camera, effects, HUD, menus, garage and portal hooks. */
 (() => {
 'use strict';
 const SD = (window.SD ||= {});
 const Audio = SD.audio;
-const { clamp, damp, rand, formatTime, suffix, escapeHtml, store } = SD.util;
+const platform = SD.platform;
+const eco = SD.economy;
+const { clamp, damp, rand, formatTime, suffix, escapeHtml } = SD.util;
 const { buildTrackMesh } = SD.track;
-const { THEMES, TRACKS, buildTrack } = SD.tracks;
+const { THEMES, WORLDS, TRACKS, buildTrack } = SD.tracks;
 const { CAR_TYPES, COLORS, CarModel } = SD.cars;
 const { World } = SD.world;
 const { Particles } = SD.fx;
@@ -15,22 +17,10 @@ const { Input } = SD.input;
 const $ = (id) => document.getElementById(id);
 const V3 = THREE.Vector3;
 const IDLE = { steer: 0, gas: false, brake: false, nitro: false, pitch: 0, roll: 0 };
-
-/* ====================================================================== save data */
-const SAVE_KEY = 'speedDemons.v1';
-const OLD_SAVE_KEY = 'stuntRush.v1'; // the game's earlier name - carry progress over
-const save = Object.assign(
-  { car: 'racer', color: COLORS[0], track: 0, sfx: true, music: true, quality: null, autoGas: null, results: {} },
-  store.get(SAVE_KEY, null) || store.get(OLD_SAVE_KEY, {}),
-);
-const persist = () => store.set(SAVE_KEY, save);
-const result = (i) => save.results[TRACKS[i].id] || {};
-const totalStars = () => TRACKS.reduce((n, _, i) => n + (result(i).stars || 0), 0);
-const trackUnlocked = (i) => i === 0 || (result(i - 1).stars || 0) > 0;
-const carUnlocked = (t) => totalStars() >= t.unlock;
-const carType = () => CAR_TYPES.find((t) => t.id === save.car) || CAR_TYPES[0];
-if (!carUnlocked(carType())) save.car = 'racer';
-if (!TRACKS[save.track] || !trackUnlocked(save.track)) save.track = 0;
+const save = eco.save; // filled in boot(), after the platform SDK is ready
+const persist = eco.persist;
+const fmt = (n) => Math.round(n).toLocaleString('en-US');
+const coinHtml = (n) => `<span class="coin-ico"></span>${fmt(n)}`;
 
 /* ====================================================================== renderer & scene */
 const input = new Input();
@@ -40,7 +30,7 @@ const QUALITY = {
   low: { label: 'Low', ratio: 1, shadows: false, shadowSize: 512 },
 };
 const QUALITY_ORDER = ['high', 'medium', 'low'];
-let quality = QUALITY[save.quality] ? save.quality : input.touchUI ? 'medium' : 'high';
+let quality = input.touchUI ? 'medium' : 'high';
 
 const canvas = $('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !input.touchUI, powerPreference: 'high-performance' });
@@ -95,17 +85,26 @@ function applyQuality() {
 }
 
 /* ====================================================================== game state */
-const AI_ROSTER = [
-  { name: 'Blaze', type: 'muscle', color: '#ff8a00' },
-  { name: 'Nova', type: 'racer', color: '#3a86ff' },
-  { name: 'Dash', type: 'buggy', color: '#2ec4b6' },
-  { name: 'Viper', type: 'racer', color: '#8338ec' },
+const RIVALS = [
+  { name: 'Blaze', color: '#ff8a00' },
+  { name: 'Nova', color: '#3a86ff' },
+  { name: 'Dash', color: '#2ec4b6' },
+  { name: 'Viper', color: '#8338ec' },
 ];
-const TRACK_SKILL = [0.86, 0.92, 0.96, 1.0]; // AI pace per track (fraction of 52 m/s)
+// Rival cars per world - they get flashier as you progress (their pace comes from the track).
+const RIVAL_CARS = [
+  ['muscle', 'racer', 'buggy', 'racer'],
+  ['muscle', 'racer', 'buggy', 'monster'],
+  ['formula', 'monster', 'buggy', 'muscle'],
+  ['hyper', 'formula', 'muscle', 'monster'],
+];
 
 const S = {
   mode: 'loading', // loading | menu | countdown | race | finished
   paused: false,
+  adPause: false,
+  starting: false,
+  raced: false, // a race was started this session (ad breaks only between races)
   screen: null,
   trackIdx: -1,
   def: null,
@@ -115,6 +114,7 @@ const S = {
   player: null,
   playerModel: null,
   aiModels: null,
+  aiWorld: -1,
   ais: [],
   all: [],
   countdown: 0,
@@ -124,10 +124,14 @@ const S = {
   position: 5,
   resultsShown: false,
   result: null,
+  doubled: false,
   shake: 0,
   camSnap: true,
   lastBump: 0,
   fovKick: 0,
+  draft: false,
+  airHints: 0,
+  hintT: 0,
 };
 
 function disposeTree(obj) {
@@ -140,6 +144,8 @@ function disposeTree(obj) {
     }
   });
 }
+
+const worldOf = (i) => Math.max(0, WORLDS.findIndex((w) => w.theme === TRACKS[i].theme));
 
 function loadTrack(idx) {
   if (S.trackIdx === idx && S.track) return;
@@ -155,36 +161,49 @@ function loadTrack(idx) {
   scene.add(S.trackView.group);
   world.build(S.theme, S.track);
   renderer.toneMappingExposure = S.theme.nightSky ? 1.2 : 1.05;
-  if (!S.aiModels) {
-    S.aiModels = AI_ROSTER.map((r) => {
-      const m = new CarModel(r.type, r.color);
+  const w = worldOf(idx);
+  const cars = RIVAL_CARS[w] || RIVAL_CARS[0];
+  if (S.aiWorld !== w) {
+    if (S.aiModels) {
+      for (const m of S.aiModels) {
+        scene.remove(m.root);
+        disposeTree(m.root);
+      }
+    }
+    S.aiModels = RIVALS.map((r, k) => {
+      const m = new CarModel(cars[k], r.color);
       scene.add(m.root);
       return m;
     });
+    S.aiWorld = w;
   }
-  S.ais = AI_ROSTER.map((r, k) => new AiCar(S.track, CAR_TYPES.find((t) => t.id === r.type), S.aiModels[k], r.name, 1));
+  S.ais = RIVALS.map((r, k) => new AiCar(S.track, eco.carById(cars[k]), S.aiModels[k], r.name, 1));
   createPlayer();
 }
 
-function createPlayer() {
+// Build the player's car. carId lets the garage preview cars you don't drive yet.
+function createPlayer(carId = save.car) {
   if (S.playerModel) {
     scene.remove(S.playerModel.root);
     disposeTree(S.playerModel.root);
   }
-  const type = carType();
-  S.playerModel = new CarModel(type.id, save.color);
+  S.playerModel = new CarModel(carId, save.color);
   scene.add(S.playerModel.root);
-  S.player = new PlayerCar(S.track, type, S.playerModel, CONFIG.playerName || 'You');
+  S.player = new PlayerCar(S.track, eco.carStats(carId), S.playerModel, CONFIG.playerName || 'You');
   S.player.on(onPlayerEvent);
   S.all = [S.player, ...S.ais];
-  AI_ROSTER.forEach((r, k) => S.aiModels[k].setColor(r.color === save.color ? '#e9ecef' : r.color));
+  recolorRivals();
   placeGrid();
+}
+
+function recolorRivals() {
+  RIVALS.forEach((r, k) => S.aiModels[k].setColor(r.color === save.color ? '#e9ecef' : r.color));
 }
 
 function placeGrid() {
   const tr = S.track;
-  for (const st of tr.stars) st.taken = false;
-  const base = TRACK_SKILL[S.trackIdx] || 0.85;
+  for (const c of tr.coins) c.taken = false;
+  const base = S.def.ai || 0.85;
   const slots = [[-3, 6], [3, 6], [-3, 15], [3, 15]];
   S.ais.forEach((a, k) => {
     a.skill = base + 0.03 - k * 0.02;
@@ -214,6 +233,7 @@ function enterMenu(screen = 'screen-title') {
   S.mode = 'menu';
   S.paused = false;
   S.resultsShown = false;
+  platform.gameplay(false);
   loadTrack(save.track);
   placeGrid();
   input.inGame = false;
@@ -225,7 +245,16 @@ function enterMenu(screen = 'screen-title') {
   updateOverlays();
 }
 
-function startRace() {
+// withBreak: offer the portal an ad break first (between races only, never before the first).
+async function startRace(withBreak = S.raced) {
+  if (S.starting) return;
+  S.starting = true;
+  showScreen(null);
+  input.inGame = false;
+  Audio.engineOff();
+  if (withBreak) await platform.commercialBreak();
+  S.starting = false;
+  S.raced = true;
   loadTrack(save.track);
   placeGrid();
   S.mode = 'countdown';
@@ -234,16 +263,20 @@ function startRace() {
   S.finishT = 0;
   S.paused = false;
   S.resultsShown = false;
-  S.position = S.all.length;
+  S.draft = false;
   smoke.clear();
   glow.clear();
   for (const k in hudCache) delete hudCache[k];
   buildProgressDots();
-  showScreen(null);
   input.inGame = true;
   input.releaseAll();
   Audio.init();
   Audio.engineOn();
+  platform.gameplay(true);
+  if (!save.tutorial) {
+    S.airHints = 0;
+    showHint(input.touchUI ? 'Hold <b>◀ ▶</b> to steer &middot; hold <b>⚡</b> for nitro' : '<kbd>↑</kbd> gas &middot; <kbd>←</kbd><kbd>→</kbd> steer &middot; <kbd>Space</kbd> nitro', 7);
+  }
   updateOverlays();
 }
 
@@ -254,6 +287,7 @@ function setPaused(v) {
   input.releaseAll();
   if (v) Audio.engineOff();
   else Audio.engineOn();
+  platform.gameplay(!v);
   showScreen(v ? 'screen-pause' : null);
   updateOverlays();
 }
@@ -266,28 +300,34 @@ function finishRace() {
   S.mode = 'finished';
   S.finishT = 0;
   input.inGame = false;
+  platform.gameplay(false);
   const pos = standings().indexOf(p) + 1;
   S.position = pos;
   const earned = [true, pos === 1, p.score >= S.def.target];
   const stars = earned.filter(Boolean).length;
-  const before = { total: totalStars(), tracks: TRACKS.map((_, i) => trackUnlocked(i)) };
-  const prev = result(S.trackIdx);
+  const before = { tracks: TRACKS.map((_, i) => eco.trackUnlocked(i)) };
+  const prev = eco.result(S.trackIdx);
+  const newStars = Math.max(0, stars - (prev.stars || 0));
   save.results[S.def.id] = {
     stars: Math.max(prev.stars || 0, stars),
     time: prev.time == null ? p.finishTime : Math.min(prev.time, p.finishTime),
     score: Math.max(prev.score || 0, p.score),
   };
-  persist();
+  const reward = eco.raceReward({ pos, coins: p.coins, score: p.score, trackIdx: S.trackIdx, newStars });
+  save.races = (save.races || 0) + 1;
+  if (save.races >= 2) save.tutorial = true;
+  eco.addCoins(reward.total); // also saves
   const unlocks = [];
   TRACKS.forEach((t, i) => {
-    if (!before.tracks[i] && trackUnlocked(i)) unlocks.push(`New track: ${t.name}`);
+    if (!before.tracks[i] && eco.trackUnlocked(i)) unlocks.push(`New track: ${t.name}`);
   });
-  CAR_TYPES.forEach((t) => {
-    if (before.total < t.unlock && totalStars() >= t.unlock) unlocks.push(`New car: ${t.name}`);
-  });
-  S.result = { pos, earned, unlocks };
+  const affordable = CAR_TYPES.find((t) => !eco.owns(t.id) && t.price <= save.coins);
+  if (affordable) unlocks.push(`You can buy the ${affordable.name} in the Garage!`);
+  S.result = { pos, earned, unlocks, reward };
+  S.doubled = false;
   showMsg(pos === 1 ? 'YOU WIN!' : 'FINISH!', 'hold');
   Audio.sfx.finish(pos === 1);
+  if (pos === 1) platform.happytime();
   confetti();
   updateOverlays();
 }
@@ -302,6 +342,10 @@ function update(dt) {
   S.time += dt;
   S.shake = Math.max(0, S.shake - dt * 1.8);
   S.fovKick = Math.max(0, S.fovKick - dt * 1.5);
+  if (S.hintT > 0) {
+    S.hintT -= dt;
+    if (S.hintT <= 0) hud.hint.classList.remove('show');
+  }
   const p = S.player;
   const tr = S.track;
   const inp = input.poll(p.mode === 'air');
@@ -349,8 +393,26 @@ function update(dt) {
         S.shake = Math.max(S.shake, Math.min(0.5, hit * 0.03));
       }
     });
+    // Slipstream: tuck in right behind a rival to fill your nitro.
+    let drafting = false;
+    if (p.mode === 'ground' && p.v > 20) {
+      for (const a of S.ais) {
+        const ds = a.s - p.s;
+        if (ds > 4 && ds < 18 && Math.abs(a.d - p.d) < 1.8) {
+          drafting = true;
+          break;
+        }
+      }
+    }
+    if (drafting) {
+      p.gainNitro(10 * dt);
+      if (!S.draft) Audio.sfx.draft();
+    }
+    S.draft = drafting;
     if (p.s >= tr.finishS) finishRace();
     else S.position = standings().indexOf(p) + 1;
+  } else {
+    S.draft = false;
   }
   if (S.mode === 'finished') {
     S.finishT += dt;
@@ -361,7 +423,7 @@ function update(dt) {
 
 /* ====================================================================== effects */
 const C = (hex) => new THREE.Color(hex);
-const COL = { smoke: C('#d8dce6'), dust: C('#c9b9a0'), spark: C('#ffb347'), nitro: C('#5fd0ff'), star: C('#ffd23f'), ring: C('#fff1a8') };
+const COL = { smoke: C('#d8dce6'), dust: C('#c9b9a0'), spark: C('#ffb347'), nitro: C('#5fd0ff'), coin: C('#ffd23f'), ring: C('#fff1a8') };
 const tmpV = new V3();
 const tmpV2 = new V3();
 
@@ -408,6 +470,12 @@ function confetti() {
 function onPlayerEvent(type, d) {
   const p = S.player;
   switch (type) {
+    case 'takeoff':
+      if (!save.tutorial && S.mode === 'race' && S.airHints < 3) {
+        S.airHints++;
+        showHint(input.touchUI ? 'In the air: <b>⚡</b> / <b>BRAKE</b> flip &middot; <b>◀ ▶</b> spin' : 'In the air: <kbd>↑</kbd><kbd>↓</kbd> flip &middot; <kbd>←</kbd><kbd>→</kbd> spin &middot; <kbd>Q</kbd><kbd>E</kbd> roll', 2.6);
+      }
+      break;
     case 'land': {
       Audio.sfx.land(d.impact);
       S.shake = Math.max(S.shake, Math.min(0.5, d.impact * 0.02));
@@ -447,9 +515,9 @@ function onPlayerEvent(type, d) {
       Audio.sfx.pad();
       S.fovKick = 1;
       break;
-    case 'star':
-      Audio.sfx.star();
-      burst(d.pos, 12, glow, COL.star, 7, { size: 0.35, gravity: 2 });
+    case 'coin':
+      Audio.sfx.coin();
+      burst(d.pos, 10, glow, COL.coin, 6, { size: 0.3, gravity: 2 });
       break;
     case 'ring':
       Audio.sfx.ring();
@@ -549,8 +617,9 @@ function updateCamera(dt) {
 /* ====================================================================== HUD & messages */
 const hud = {
   root: $('hud'), pos: $('h-pos'), suf: $('h-pos-suf'), of: $('h-pos-of'), time: $('h-time'), score: $('h-score'), combo: $('h-combo'),
-  speed: $('h-speed'), nitro: $('nitro'), nitroFill: $('h-nitro'), air: $('h-air'), progress: $('h-progress'),
-  touch: $('touch'), vignette: $('vignette'), msg: $('center-msg'), popups: $('popups'),
+  speed: $('h-speed'), nitro: $('nitro'), nitroFill: $('h-nitro'), air: $('h-air'), progress: $('h-progress'), coins: $('h-coins'),
+  draft: $('h-draft'), hint: $('hint'), lines: $('speedlines'),
+  touch: $('touch'), vignette: $('vignette'), msg: $('center-msg'), popups: $('popups'), toast: $('toast'),
 };
 const hudCache = {};
 function setText(node, key, v) {
@@ -586,6 +655,7 @@ function updateHUD() {
   setText(hud.of, 'of', '/' + S.all.length);
   setText(hud.time, 'time', formatTime(S.mode === 'countdown' ? 0 : p.finished ? p.finishTime : S.raceTime));
   setText(hud.score, 'score', String(p.score));
+  setText(hud.coins, 'coins', String(p.coins));
   const mult = Math.min(4, 1 + (p.combo - 1) * 0.5);
   setText(hud.combo, 'combo', p.combo > 1 ? `COMBO x${mult}` : '');
   setText(hud.speed, 'speed', String(Math.round(p.speed * 3.6)));
@@ -599,6 +669,8 @@ function updateHUD() {
   setClass(hud.nitro, 'active', 'active', p.boosting);
   setClass(hud.touch, 'air', 'air', p.mode === 'air');
   setClass(hud.vignette, 'vig', 'on', p.boosting);
+  setClass(hud.draft, 'draft', 'show', S.draft);
+  setClass(hud.lines, 'lines', 'on', S.mode === 'race' && (p.boosting || p.padT > 0 || p.speed > 60));
   const span = tr.finishS - tr.startS;
   S.all.forEach((c, i) => {
     if (dots[i]) dots[i].style.left = `${clamp((c.s - tr.startS) / span, 0, 1) * 100}%`;
@@ -610,6 +682,19 @@ function showMsg(text, cls = '') {
   hud.msg.className = 'center-msg';
   void hud.msg.offsetWidth; // restart the animation
   hud.msg.className = 'center-msg ' + (cls.includes('hold') ? cls : 'show ' + cls);
+}
+
+function showHint(html, secs) {
+  hud.hint.innerHTML = html;
+  hud.hint.classList.add('show');
+  S.hintT = secs;
+}
+
+function toast(html) {
+  hud.toast.innerHTML = html;
+  hud.toast.className = 'toast';
+  void hud.toast.offsetWidth;
+  hud.toast.className = 'toast show';
 }
 
 function popups(lines) {
@@ -632,7 +717,13 @@ function updateOverlays() {
     if (input.clearTouchVisuals) input.clearTouchVisuals();
   }
   hud.vignette.classList.remove('on');
+  hud.lines.classList.remove('on');
   hudCache.vig = false;
+  hudCache.lines = false;
+  if (!racing) {
+    hud.hint.classList.remove('show');
+    S.hintT = 0;
+  }
   $('btn-respawn').hidden = !racing;
 }
 
@@ -644,16 +735,17 @@ function showScreen(id) {
 
 function clickPrimary() {
   if (!S.screen) return;
-  const b = [...document.querySelectorAll(`#${S.screen} [data-primary]`)].find((x) => !x.disabled);
+  const b = [...document.querySelectorAll(`#${S.screen} [data-primary]`)].find((x) => !x.disabled && !x.hidden);
   if (b) b.click();
 }
 
-function starString(n) {
-  return '★'.repeat(n) + '☆'.repeat(3 - n);
-}
+const starString = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
 
 function refreshMenus() {
-  $('star-total').textContent = String(totalStars());
+  $('title-coins').textContent = fmt(save.coins);
+  $('star-total').textContent = `${eco.totalStars()} / ${TRACKS.length * 3}`;
+  const next = eco.nextTrack();
+  $('play-next').innerHTML = `${escapeHtml(TRACKS[next].name)} <span class="stars">${starString(eco.result(next).stars || 0)}</span>`;
   $('btn-sound').textContent = (save.sfx ? '🔊' : '🔇') + ' Sound';
   $('btn-sound').classList.toggle('off', !save.sfx);
   $('btn-music').textContent = '🎵 Music';
@@ -661,68 +753,143 @@ function refreshMenus() {
   $('btn-quality').textContent = '✨ ' + QUALITY[quality].label;
   $('btn-autogas').textContent = 'Auto-gas: ' + (input.autoGas ? 'On' : 'Off');
   $('btn-autogas').classList.toggle('off', !input.autoGas);
-
-  const list = $('track-list');
-  list.innerHTML = '';
-  TRACKS.forEach((t, i) => {
-    const r = result(i);
-    const open = trackUnlocked(i);
-    const b = document.createElement('button');
-    b.className = 'track-card' + (i === save.track ? ' sel' : '') + (open ? '' : ' locked');
-    b.innerHTML =
-      `<div class="track-thumb" style="background:${THEMES[t.theme].thumb}">${open ? '' : '🔒'}</div>` +
-      `<div class="track-info"><div class="track-name">${escapeHtml(t.name)}</div><div class="track-desc">${escapeHtml(open ? t.desc : 'Finish the previous track to unlock')}</div>` +
-      `<div class="track-meta"><span class="stars">${starString(r.stars || 0)}</span><span>${r.time != null ? formatTime(r.time) : ''}</span></div></div>`;
-    b.addEventListener('click', () => {
-      if (!open) return;
-      save.track = i;
-      persist();
-      loadTrack(i);
-      placeGrid();
-      refreshMenus();
-    });
-    list.appendChild(b);
-  });
-
-  const cars = $('car-list');
-  cars.innerHTML = '';
-  for (const t of CAR_TYPES) {
-    const open = carUnlocked(t);
-    const b = document.createElement('button');
-    b.className = 'car-card' + (t.id === save.car ? ' sel' : '') + (open ? '' : ' locked');
-    const bar = (label, v) => `<span>${label}</span><div class="stat-bar"><i style="width:${Math.round(v * 100)}%"></i></div>`;
-    b.innerHTML =
-      `<span class="nm">${t.name}</span><span class="lock">${open ? '' : `🔒 ${t.unlock} ★`}</span>` +
-      `<span class="ds">${t.desc}</span>` +
-      `<div class="stats">${bar('Speed', t.top / 57)}${bar('Accel', t.accel / 27)}${bar('Grip', t.grip / 31)}${bar('Air', t.air / 1.3)}</div>`;
-    b.addEventListener('click', () => {
-      if (!open || save.car === t.id) return;
-      save.car = t.id;
-      persist();
-      createPlayer();
-      refreshMenus();
-    });
-    cars.appendChild(b);
-  }
-
-  const colors = $('color-list');
-  colors.innerHTML = '';
-  for (const col of COLORS) {
-    const b = document.createElement('button');
-    b.className = 'swatch' + (col === save.color ? ' sel' : '');
-    b.style.background = col;
-    b.setAttribute('aria-label', 'Colour ' + col);
-    b.addEventListener('click', () => {
-      save.color = col;
-      persist();
-      S.playerModel.setColor(col);
-      AI_ROSTER.forEach((r, k) => S.aiModels[k].setColor(r.color === col ? '#e9ecef' : r.color));
-      refreshMenus();
-    });
-    colors.appendChild(b);
-  }
+  renderTracks();
+  if (S.screen === 'screen-garage') renderGarage();
 }
 
+function renderTracks() {
+  const list = $('track-list');
+  list.innerHTML = '';
+  WORLDS.forEach((w) => {
+    const idxs = TRACKS.map((_, i) => i).filter((i) => TRACKS[i].theme === w.theme);
+    const got = idxs.reduce((n, i) => n + (eco.result(i).stars || 0), 0);
+    const head = document.createElement('div');
+    head.className = 'world-head';
+    head.innerHTML = `<span>${escapeHtml(w.name)}</span><span class="stars">★ ${got}/${idxs.length * 3}</span>`;
+    list.appendChild(head);
+    const row = document.createElement('div');
+    row.className = 'world-row';
+    for (const i of idxs) {
+      const t = TRACKS[i];
+      const r = eco.result(i);
+      const open = eco.trackUnlocked(i);
+      const b = document.createElement('button');
+      b.className = 'track-card' + (i === save.track ? ' sel' : '') + (open ? '' : ' locked');
+      b.innerHTML =
+        `<div class="track-thumb" style="background:${THEMES[t.theme].thumb}">${open ? `<span class="track-no">${i + 1}</span>` : '🔒'}</div>` +
+        `<div class="track-info"><div class="track-name">${escapeHtml(t.name)}</div><div class="track-desc">${escapeHtml(open ? t.desc : 'Finish the previous track to unlock')}</div>` +
+        `<div class="track-meta"><span class="stars">${starString(r.stars || 0)}</span><span>${r.time != null ? formatTime(r.time) : ''}</span></div></div>`;
+      b.addEventListener('click', () => {
+        if (!open) {
+          Audio.sfx.deny();
+          return;
+        }
+        save.track = i;
+        persist();
+        loadTrack(i);
+        placeGrid();
+        renderTracks();
+      });
+      row.appendChild(b);
+    }
+    list.appendChild(row);
+  });
+}
+
+/* ---------------------------------------------------------------- garage */
+const garage = { view: 'racer', from: 'screen-title' };
+const STAT_MAX = { top: 72, accel: 36, grip: 42, air: 1.6 };
+
+function openGarage(from) {
+  garage.from = from;
+  garage.view = save.car;
+  showScreen('screen-garage');
+  renderGarage();
+}
+
+function closeGarage() {
+  if (garage.view !== save.car) createPlayer(save.car);
+  showScreen(garage.from || 'screen-title');
+  refreshMenus();
+}
+
+function renderGarage() {
+  const id = garage.view;
+  const t = eco.carById(id);
+  const owned = eco.owns(id);
+  $('garage-coins').textContent = fmt(save.coins);
+
+  $('car-list').innerHTML = CAR_TYPES.map((c) => {
+    const tag = eco.owns(c.id) ? (c.id === save.car ? '<span class="tag on">✓</span>' : '') : `<span class="tag price">${coinHtml(c.price)}</span>`;
+    return `<button class="car-chip${c.id === id ? ' sel' : ''}${eco.owns(c.id) ? '' : ' locked'}" data-car="${c.id}"><span class="nm">${c.name}</span>${tag}</button>`;
+  }).join('');
+
+  const st = eco.carStats(id);
+  const bar = (label, v) => `<span>${label}</span><div class="stat-bar"><i style="width:${Math.round(clamp(v, 0, 1) * 100)}%"></i></div>`;
+  $('car-info').innerHTML =
+    `<div class="car-title">${t.name}</div><div class="car-desc">${t.desc}</div>` +
+    `<div class="stats">${bar('Speed', st.top / STAT_MAX.top)}${bar('Accel', st.accel / STAT_MAX.accel)}${bar('Grip', st.grip / STAT_MAX.grip)}${bar('Air', st.air / STAT_MAX.air)}</div>`;
+
+  let action;
+  if (!owned) {
+    const can = save.coins >= t.price;
+    action = `<button class="btn primary buy" data-buy="${id}"${can ? '' : ' disabled'}>Buy ${coinHtml(t.price)}</button>` + (can ? '' : `<div class="need">Need ${fmt(t.price - save.coins)} more coins</div>`);
+  } else if (id === save.car) {
+    action = '<div class="driving">✓ Your car</div>';
+  } else {
+    action = `<button class="btn primary" data-drive="${id}">Drive this car</button>`;
+  }
+  $('car-action').innerHTML = action;
+
+  const lv = eco.levels(id);
+  $('upgrade-list').innerHTML = owned
+    ? eco.UPGRADES.map((u) => {
+      const cost = eco.upgradeCost(id, u.id);
+      const pips = Array.from({ length: eco.MAX_LEVEL }, (_, k) => `<i class="${k < lv[u.id] ? 'on' : ''}"></i>`).join('');
+      const btn = cost == null
+        ? '<span class="maxed">MAX</span>'
+        : `<button class="btn up-btn" data-up="${u.id}"${save.coins >= cost ? '' : ' disabled'}>${coinHtml(cost)}</button>`;
+      return `<div class="up-row"><div class="up-name">${u.name}<small>${u.desc}</small></div><div class="pips">${pips}</div>${btn}</div>`;
+    }).join('')
+    : '<p class="hint-text">Buy this car to upgrade it.</p>';
+
+  $('color-list').innerHTML = COLORS.map((col) => `<button class="swatch${col === save.color ? ' sel' : ''}" style="background:${col}" data-color="${col}" aria-label="Colour ${col}"></button>`).join('');
+}
+
+$('screen-garage').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-car],[data-buy],[data-drive],[data-up],[data-color]');
+  if (!el) return;
+  const d = el.dataset;
+  if (d.car) {
+    if (d.car !== garage.view) {
+      garage.view = d.car;
+      createPlayer(d.car);
+    }
+  } else if (d.buy) {
+    if (eco.buyCar(d.buy)) {
+      Audio.sfx.buy();
+      toast(`🎉 The <b>${escapeHtml(eco.carById(d.buy).name)}</b> is yours!`);
+      createPlayer(d.buy);
+    } else Audio.sfx.deny();
+  } else if (d.drive) {
+    save.car = d.drive;
+    persist();
+    Audio.sfx.buy();
+  } else if (d.up) {
+    if (eco.buyUpgrade(garage.view, d.up)) {
+      Audio.sfx.buy();
+      S.player.type = eco.carStats(garage.view);
+    } else Audio.sfx.deny();
+  } else if (d.color) {
+    save.color = d.color;
+    persist();
+    S.playerModel.setColor(d.color);
+    recolorRivals();
+  }
+  renderGarage();
+});
+
+/* ---------------------------------------------------------------- results */
 function showResults() {
   S.resultsShown = true;
   const p = S.player;
@@ -734,18 +901,60 @@ function showResults() {
   $('res-time').textContent = formatTime(p.finishTime);
   $('res-score').textContent = String(p.score);
   $('res-target').textContent = String(S.def.target);
+  renderResultCoins();
   $('res-unlock').textContent = r.unlocks.length ? '🔓 ' + r.unlocks.join(' · ') : '';
   $('res-table').innerHTML = standings()
     .map((c, i) => `<li class="${c.isPlayer ? 'me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${escapeHtml(c.name)}</span><span>${c.finished ? formatTime(c.finishTime) : '—'}</span></li>`)
     .join('');
-  const next = S.trackIdx + 1;
-  const btn = $('btn-next');
-  btn.disabled = !(next < TRACKS.length && trackUnlocked(next));
-  btn.textContent = next < TRACKS.length ? 'Next track' : 'All tracks done!';
-  $('btn-retry').toggleAttribute('data-primary', btn.disabled);
+  const last = S.trackIdx + 1 >= TRACKS.length;
+  $('btn-next').textContent = last ? 'Race again' : 'Next race';
+  const dbl = $('btn-double');
+  dbl.hidden = !platform.hasAds;
+  dbl.disabled = false;
+  dbl.innerHTML = `🎬 Double coins <small>+${fmt(r.reward.total)}</small>`;
   Audio.engineOff();
   showScreen('screen-results');
   updateOverlays();
+  countUp($('res-total'), r.reward.total * (S.doubled ? 2 : 1));
+}
+
+function renderResultCoins() {
+  const rw = S.result.reward;
+  $('res-coins').innerHTML =
+    rw.lines.map((l) => `<div class="coin-line"><span>${escapeHtml(l.label)}</span><b>+${fmt(l.value)}</b></div>`).join('') +
+    (S.doubled ? `<div class="coin-line bonus"><span>🎬 Bonus</span><b>+${fmt(rw.total)}</b></div>` : '') +
+    `<div class="coin-line total"><span>Coins earned</span><b><span class="coin-ico"></span><span id="res-total">${fmt(rw.total * (S.doubled ? 2 : 1))}</span></b></div>`;
+}
+
+let countTimer = null;
+function countUp(el, to) {
+  clearInterval(countTimer);
+  const t0 = performance.now();
+  const dur = 900;
+  countTimer = setInterval(() => {
+    const k = Math.min(1, (performance.now() - t0) / dur);
+    el.textContent = fmt(to * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) Audio.sfx.tick();
+    else clearInterval(countTimer);
+  }, 60);
+}
+
+async function doubleCoins() {
+  const btn = $('btn-double');
+  if (S.doubled || btn.disabled) return;
+  btn.disabled = true;
+  const ok = await platform.rewardedBreak();
+  if (ok && !S.doubled) {
+    S.doubled = true;
+    eco.addCoins(S.result.reward.total);
+    renderResultCoins();
+    countUp($('res-total'), S.result.reward.total * 2);
+    btn.innerHTML = '✓ Coins doubled';
+    Audio.sfx.buy();
+    toast(`${coinHtml(S.result.reward.total)} bonus coins!`);
+  } else {
+    btn.disabled = false;
+  }
 }
 
 /* ====================================================================== fullscreen & mobile gate */
@@ -767,11 +976,12 @@ async function enterLandscapeFullscreen() {
   }
   try {
     if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
-  } catch (e) { /* unsupported (e.g. iPhone): the rotate prompt takes over */ }
+  } catch (e) { /* unsupported (e.g. iPhone): the page turns itself sideways instead */ }
 }
 
 let fsHelpReturn = null;
 function toggleFullscreen() {
+  if (!platform.fullscreenUI) return; // portals provide their own full screen
   if (!canFullscreen) {
     // iPhone Safari has no Fullscreen API for pages: explain Add to Home Screen instead
     fsHelpReturn = S.screen;
@@ -793,19 +1003,22 @@ function refreshFullscreenButtons() {
   const label = inFullscreen() ? '⛶ Exit full screen' : '⛶ Full screen';
   document.querySelectorAll('.btn-fs').forEach((b) => {
     b.textContent = label;
-    // an iPhone home-screen app already runs full screen (and can't toggle it). Note that
-    // display-mode also reads "fullscreen" while a page is in full screen, so don't hide it otherwise.
-    b.hidden = !canFullscreen && installedApp();
+    // Hidden on portals (CrazyGames forbids in-game full screen buttons), and in an iPhone
+    // home-screen app, which already runs full screen. Note that display-mode also reads
+    // "fullscreen" while a page is in full screen, so don't use it on its own.
+    b.hidden = !platform.fullscreenUI || (!canFullscreen && installedApp());
   });
+  document.querySelectorAll('.fs-only').forEach((el) => { el.hidden = !platform.fullscreenUI; });
 }
 
+let gateStartsRace = false;
 function showGate(resume) {
   gateOpen = true;
+  gateStartsRace = !resume; // first tap goes straight into a race (one tap to gameplay)
   gateReturn = S.screen;
   showScreen(null);
-  $('btn-gate').textContent = !canFullscreen ? '▶ Play' : resume ? '▶ Back to full screen' : '▶ Play in full screen';
-  $('btn-gate-skip').hidden = !canFullscreen;
-  $('gate-hint').textContent = isIOS && !installedApp() ? 'For true full screen on iPhone: tap Share → Add to Home Screen.' : '';
+  $('btn-gate').textContent = resume ? '▶ Back to full screen' : '▶ Play in full screen';
+  $('gate-hint').textContent = '';
   $('gate').classList.add('active');
 }
 
@@ -818,7 +1031,7 @@ function closeGate() {
 
 function onFullscreenChange() {
   refreshFullscreenButtons();
-  if (!input.touchUI || !canFullscreen || fsDeclined || gateOpen || installedApp()) return;
+  if (!platform.fullscreenUI || !input.touchUI || !canFullscreen || fsDeclined || gateOpen || installedApp()) return;
   if (!inFullscreen()) {
     setPaused(true);
     showGate(true);
@@ -829,36 +1042,39 @@ document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
 /* ====================================================================== wiring */
 const on = (id, fn) => $(id).addEventListener('click', fn);
-on('btn-play', () => showScreen('screen-tracks'));
-on('btn-garage', () => {
-  S.lastMenu = 'screen-title';
-  showScreen('screen-garage');
+on('btn-play', () => {
+  save.track = eco.nextTrack();
+  persist();
+  startRace();
 });
-on('btn-tracks-garage', () => {
-  S.lastMenu = 'screen-tracks';
-  showScreen('screen-garage');
-});
-on('btn-garage-done', () => showScreen(S.lastMenu || 'screen-title'));
+on('btn-tracks', () => showScreen('screen-tracks'));
+on('btn-garage', () => openGarage('screen-title'));
+on('btn-tracks-garage', () => openGarage('screen-tracks'));
+on('btn-garage-done', closeGarage);
 on('btn-howto', () => showScreen('screen-howto'));
 on('btn-howto-back', () => showScreen('screen-title'));
 on('btn-tracks-back', () => showScreen('screen-title'));
-on('btn-race', startRace);
+on('btn-race', () => startRace());
 on('btn-pause', () => setPaused(true));
 on('btn-respawn', () => {
   if (S.mode === 'race' && S.player.mode !== 'crash') S.player.respawn();
 });
 on('btn-resume', () => setPaused(false));
-on('btn-restart', startRace);
+on('btn-restart', () => startRace(true));
 on('btn-quit', () => enterMenu());
-on('btn-retry', startRace);
+on('btn-retry', () => startRace(true));
 on('btn-res-menu', () => enterMenu());
+on('btn-res-garage', () => {
+  enterMenu();
+  openGarage('screen-title');
+});
 on('btn-next', () => {
   const next = S.trackIdx + 1;
-  if (next >= TRACKS.length || !trackUnlocked(next)) return;
-  save.track = next;
+  if (next < TRACKS.length && eco.trackUnlocked(next)) save.track = next;
   persist();
-  startRace();
+  startRace(true);
 });
+on('btn-double', doubleCoins);
 on('btn-sound', () => {
   save.sfx = !save.sfx;
   Audio.setSfx(save.sfx);
@@ -889,7 +1105,11 @@ on('btn-fs-pause', toggleFullscreen);
 on('btn-fs-help-back', () => showScreen(fsHelpReturn || 'screen-title'));
 on('btn-gate', () => {
   fsDeclined = false;
-  Promise.race([enterLandscapeFullscreen(), new Promise((r) => setTimeout(r, 800))]).finally(closeGate);
+  const race = gateStartsRace;
+  Promise.race([enterLandscapeFullscreen(), new Promise((r) => setTimeout(r, 800))]).finally(() => {
+    closeGate();
+    if (race) $('btn-play').click();
+  });
 });
 on('btn-gate-skip', () => {
   fsDeclined = true;
@@ -913,14 +1133,14 @@ function unlockAudio() {
 }
 for (const ev of ['pointerdown', 'touchend', 'click', 'keydown']) window.addEventListener(ev, unlockAudio);
 
-input.autoGas = save.autoGas == null ? input.touchUI : save.autoGas;
 input.on.pause = () => setPaused(!S.paused);
 input.on.respawn = () => {
   if (S.mode === 'race' && !S.paused && S.player.mode !== 'crash') S.player.respawn();
 };
 input.on.primary = clickPrimary;
 input.on.back = () => {
-  if (['screen-tracks', 'screen-garage', 'screen-howto'].includes(S.screen)) showScreen('screen-title');
+  if (S.screen === 'screen-garage') closeGarage();
+  else if (['screen-tracks', 'screen-howto'].includes(S.screen)) showScreen('screen-title');
   else if (S.screen === 'screen-fs-help') showScreen(fsHelpReturn || 'screen-title');
 };
 input.on.fullscreen = toggleFullscreen;
@@ -932,7 +1152,7 @@ input.on.touchDetected = () => {
 };
 input.bindTouch({ zone: $('t-steer'), left: $('t-left'), right: $('t-right'), brake: $('t-brake'), nitro: $('t-nitro') });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
-$('touch').addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
@@ -943,6 +1163,22 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 window.addEventListener('resize', resize);
+
+// Portal ads: freeze the game, silence it and ignore input until the ad is over.
+platform.on('adStart', () => {
+  S.adPause = true;
+  input.enabled = false;
+  input.releaseAll();
+  Audio.setMuted('ad', true);
+});
+platform.on('adEnd', () => {
+  S.adPause = false;
+  input.enabled = true;
+  input.releaseAll();
+  Audio.setMuted('ad', false);
+  last = performance.now();
+});
+platform.on('mute', (m) => Audio.setMuted('platform', m));
 
 /* ====================================================================== main loop */
 const perf = { t: 0, frames: 0, grace: 4, drops: 0 };
@@ -972,6 +1208,7 @@ function perfMonitor(dt) {
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
+  if (S.adPause) return;
   const dt = clamp((now - last) / 1000, 0, 0.05);
   last = now;
   if (window.innerWidth !== view.winW || window.innerHeight !== view.winH) resize();
@@ -996,7 +1233,12 @@ function frame(now) {
 }
 
 /* ====================================================================== boot */
-function boot() {
+async function boot() {
+  const fontsReady = document.fonts && document.fonts.load ? document.fonts.load('800 40px "Baloo 2"').catch(() => {}) : Promise.resolve();
+  await Promise.all([platform.init(), Promise.race([fontsReady, new Promise((r) => setTimeout(r, 2500))])]);
+  eco.reload();
+  quality = QUALITY[save.quality] ? save.quality : input.touchUI ? 'medium' : 'high';
+  input.autoGas = save.autoGas == null ? input.touchUI : save.autoGas;
   document.title = CONFIG.gameTitle || 'Speed Demons';
   $('title-text').textContent = CONFIG.gameTitle || 'Speed Demons';
   $('gate-title').textContent = CONFIG.gameTitle || 'Speed Demons';
@@ -1005,8 +1247,9 @@ function boot() {
   applyQuality();
   loadTrack(save.track);
   enterMenu();
-  if (input.touchUI) showGate(false);
+  if (platform.fullscreenUI && input.touchUI && canFullscreen && !installedApp()) showGate(false);
   $('loading').classList.add('done');
+  platform.loadingDone();
   last = performance.now();
   requestAnimationFrame(frame);
 }
@@ -1014,7 +1257,7 @@ function boot() {
 // Dev hook (only with ?debug in the URL): step the simulation without requestAnimationFrame.
 if (new URLSearchParams(location.search).has('debug')) {
   window.__speedDemons = {
-    S, input, save,
+    S, input, save, eco, platform, startRace, enterMenu,
     step(seconds, draw = true) {
       const h = 1 / 60;
       for (let t = 0; t < seconds; t += h) {
@@ -1033,13 +1276,8 @@ if (new URLSearchParams(location.search).has('debug')) {
   };
 }
 
-const fontsReady = document.fonts && document.fonts.load ? document.fonts.load('800 40px "Baloo 2"').catch(() => {}) : Promise.resolve();
-Promise.race([fontsReady, new Promise((r) => setTimeout(r, 2500))]).then(() => {
-  try {
-    boot();
-  } catch (err) {
-    $('loading-text').textContent = 'Sorry - this device could not start the game (' + err.message + ')';
-    throw err;
-  }
+boot().catch((err) => {
+  $('loading-text').textContent = 'Sorry - this device could not start the game (' + err.message + ')';
+  throw err;
 });
 })();

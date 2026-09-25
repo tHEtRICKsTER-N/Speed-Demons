@@ -40,10 +40,11 @@ function suffix(n) {
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
+// JSON saves through the platform's storage (CrazyGames account sync, else localStorage).
 const store = {
   get(key, fallback) {
     try {
-      const v = localStorage.getItem(key);
+      const v = SD.platform ? SD.platform.storage.get(key) : localStorage.getItem(key);
       return v == null ? fallback : JSON.parse(v);
     } catch (e) {
       return fallback;
@@ -51,7 +52,9 @@ const store = {
   },
   set(key, value) {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      const v = JSON.stringify(value);
+      if (SD.platform) SD.platform.storage.set(key, v);
+      else localStorage.setItem(key, v);
     } catch (e) {
       /* storage unavailable - ignore */
     }
