@@ -1,17 +1,20 @@
 # Speed Demons
 
-A 3D arcade stunt racer for PC and phones. Race rivals across 12 sky tracks full of loops, corkscrews, ramps and big jumps. Pull flips, spins and barrel rolls for stunt points and nitro, grab coins, and spend them on new cars and upgrades.
+A 3D arcade stunt racer for PC and phones. Race rivals across 21 tracks in 7 worlds, full of loops, corkscrews, ramps, big jumps and obstacles, in rain, snow, sandstorms and volcanic ash. Pull flips, spins and barrel rolls for stunt points and nitro, grab coins, and spend them on new cars and upgrades.
 
 Built with [three.js](https://threejs.org) (bundled in `vendor/`, MIT licence). There's no build step: open `index.html` and play. The cars, tracks, scenery and sounds are all generated in code, so the whole game is about 300 KB zipped.
 
 ## Features
 
-- **12 tracks in 4 worlds:** Sky Islands, Sunset Coast, Candy Clouds and Neon Nights. Finishing a track unlocks the next.
+- **21 tracks in 7 worlds:** Sky Islands, Sunset Coast, Candy Clouds, Neon Nights, Desert Canyon, Frozen Peaks and Volcano Core. Each world has its own scenery (floating islands, striped mesas and cacti, snowy mountains and pines, a flowing lava sea with smoking volcanoes). Finishing a track unlocks the next.
+- **Weather:** rain with lightning and a wet, reflective road, snow, pink sugar snow, sandstorms, volcanic embers and ash, mist.
+- **Obstacles:** traffic cones, barrier slaloms, swinging hammers, sliding blocks, spinning bars, oil and ice slicks, and bounce pads that launch you into the air for extra stunts. Rivals steer around them, and now and then get wiped out.
 - **5-car races** against named rivals who get faster (and flashier) world by world.
 - **Stunts:** front and back flips, 360 spins and barrel rolls. Combos multiply your score, clean landings earn a bonus, and bad ones crash you. Stunts fill your nitro.
 - **Missed a jump?** The car falls away into the clouds, then comes back at the last checkpoint, blinking for a moment while rivals can't bump it.
 - **Coins** on the track, plus coins for stunts, finishing position and new stars. Coins are the only currency.
-- **Garage:** 6 cars (Racer, Buggy, Muscle, Stomper the monster truck, Bolt the formula car, Phantom the hypercar), each with 4 upgrades (Engine, Turbo, Nitro, Handling, 5 levels each) and 9 colours.
+- **Garage:** 10 cars (Racer, Zippy the go-kart, Buggy, Muscle, Dust Devil the rally car, Stomper the monster truck, Hot Rod, Bolt the formula car, Phantom the hypercar, Comet the rocket car), each with its own engine sound and 4 upgrades (Engine, Turbo, Nitro, Handling, 5 levels each), and 9 colours.
+- **Looks:** sky reflections on paint and wet roads, glowing head and tail lights, chevron boards before sharp turns, lamp posts on dark tracks, sun glow.
 - **3 stars per track:** finish, win, and beat the track's stunt target.
 - **Slipstream:** tuck in behind a rival to fill your nitro.
 - **First-race hints** for keyboard and touch.
@@ -70,6 +73,16 @@ Then open <http://localhost:8000/?platform=crazygames>.
 
 Things the portals ask for that live outside the code: thumbnails and screenshots, a game description, and (Poki) an animated thumbnail.
 
+## Check it
+
+Before every release, run the sanity check. It audits every track's geometry, races every track with an autopilot in headless Chrome, and tests falls, respawns, the garage, daily rewards and the phone layout:
+
+```bash
+node tools/check.mjs
+```
+
+Add `--portals` to also test the Poki and CrazyGames ad flows (needs internet), `--shots` to save a screenshot of every track to `dist/check/`, or `--tracks 0,5` to race only some tracks. It exits with an error if anything fails.
+
 ## Run it
 
 Double-click `index.html`. It runs straight from disk in Chrome, Edge, Firefox and Safari.
@@ -85,19 +98,24 @@ Edit [`js/config.js`](js/config.js): player name, title, subtitle and results me
 ## How it works
 
 ```
-js/track.js     track builder (straights, turns, ramps, jumps, loops, corkscrews, coins),
-                the sampled 3D ribbon the physics runs on, and mesh generation
-js/tracks.js    the 12 layouts, 4 worlds and colour themes
-js/physics.js   arcade driving on the ribbon, ballistic air, tricks, landings, falls, AI drivers
+js/track.js     track builder (straights, turns, ramps, jumps, loops, corkscrews, coins, obstacles),
+                the sampled 3D ribbon the physics runs on, and mesh generation (signs, lamps)
+js/obstacles.js obstacle shapes, motion, hit tests and models
+js/tracks.js    the 21 layouts, 7 worlds, themes and weather per track
+js/physics.js   arcade driving on the ribbon, ballistic air, tricks, landings, falls, obstacle hits,
+                AI drivers and how they plan round obstacles
 js/cars.js      procedural low-poly cars and their stats
 js/economy.js   save file, coins, car purchases, upgrades, race rewards
 js/platform.js  Poki / CrazyGames SDKs: events, ads, saves
-js/world.js     sky shader, cloud sea, floating islands, balloons, lighting
+js/world.js     sky, lighting, reflections, and each world's scenery (sky / desert / arctic / volcano)
+js/weather.js   GPU weather particles, lightning
 js/fx.js        GPU particles (smoke, sparks, nitro, confetti)
 js/main.js      race flow, camera, HUD, menus, garage, full screen and landscape handling
 js/input.js     keyboard / touch / gamepad
 js/audio.js     synthesized engine, effects and music
-tools/package.mjs  builds the portal zips
+tools/package.mjs       builds the portal zips
+tools/check.mjs         the sanity check
+tools/store-assets.mjs  renders store images
 ```
 
 The scripts are plain `<script>` files rather than ES modules, so the page works from `file://`. Each file wraps itself in a function and shares its exports on `window.SD`. `index.html` loads them in dependency order, after `vendor/three.min.js` (a classic-script build of three.js that sets `window.THREE`).

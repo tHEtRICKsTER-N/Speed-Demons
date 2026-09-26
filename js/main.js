@@ -10,6 +10,7 @@ const { buildTrackMesh } = SD.track;
 const { THEMES, WORLDS, TRACKS, buildTrack } = SD.tracks;
 const { CAR_TYPES, COLORS, CarModel } = SD.cars;
 const { World } = SD.world;
+const { Weather } = SD.weather;
 const { Particles } = SD.fx;
 const { PlayerCar, AiCar, collide, separateAis } = SD.physics;
 const { Input } = SD.input;
@@ -41,7 +42,10 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 3200);
-const world = new World(scene);
+const world = new World(scene, renderer);
+const weather = new Weather(scene);
+weather.onLightning = (k) => world.lightning(k);
+weather.onThunder = (delay) => Audio.sfx.thunder(delay);
 const smoke = new Particles(500, false);
 const glow = new Particles(700, true);
 scene.add(smoke.points, glow.points);
@@ -63,6 +67,7 @@ function resize() {
   view.baseFov = aspect < 1 ? 82 : aspect < 1.45 ? 70 : 62;
   camera.updateProjectionMatrix();
   for (const p of [smoke, glow]) p.setScale(h * ratio, camera.fov);
+  weather.setScale(h * ratio, camera.fov);
 }
 
 // Touch devices always play in landscape. Held upright, the page is turned sideways with CSS
@@ -93,10 +98,13 @@ const RIVALS = [
 ];
 // Rival cars per world - they get flashier as you progress (their pace comes from the track).
 const RIVAL_CARS = [
-  ['muscle', 'racer', 'buggy', 'racer'],
+  ['muscle', 'racer', 'buggy', 'kart'],
   ['muscle', 'racer', 'buggy', 'monster'],
   ['formula', 'monster', 'buggy', 'muscle'],
   ['hyper', 'formula', 'muscle', 'monster'],
+  ['rally', 'monster', 'buggy', 'hotrod'],
+  ['rally', 'formula', 'hotrod', 'monster'],
+  ['rocket', 'hyper', 'hotrod', 'formula'],
 ];
 
 const S = {
@@ -132,6 +140,7 @@ const S = {
   draft: false,
   airHints: 0,
   hintT: 0,
+  lightLevel: 0.2, // how strongly car lights glow on this track (0 day .. 1 night)
   slowT: 0, // real seconds of slow motion left (perfect landings)
   lastPos: 5,
   testDrive: null, // car id borrowed for one race (rewarded video in the garage)
@@ -171,10 +180,14 @@ function loadTrack(idx) {
     scene.remove(S.trackView.group);
     disposeTree(S.trackView.group);
   }
-  S.trackView = buildTrackMesh(S.track, S.theme, { anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()) });
+  const look = Weather.look(S.def.weather) || {};
+  S.trackView = buildTrackMesh(S.track, S.theme, { anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()), wet: !!look.wet });
   scene.add(S.trackView.group);
-  world.build(S.theme, S.track);
-  renderer.toneMappingExposure = S.theme.nightSky ? 1.2 : 1.05;
+  world.build(S.theme, S.track, { fogScale: look.fog, sunScale: look.sun, lightScale: look.light });
+  weather.set(S.def.weather || 'clear');
+  renderer.toneMappingExposure = S.theme.exposure || (S.theme.nightSky ? 1.2 : 1.05);
+  // how strongly car lights glow: dark worlds and gloomy weather switch them fully on
+  S.lightLevel = S.theme.nightSky || S.theme.env === 'volcano' || (look.sun || 1) < 0.6 ? 1 : 0.2;
   const w = worldOf(idx);
   const cars = RIVAL_CARS[w] || RIVAL_CARS[0];
   if (S.aiWorld !== w) {
@@ -187,10 +200,12 @@ function loadTrack(idx) {
     S.aiModels = RIVALS.map((r, k) => {
       const m = new CarModel(cars[k], r.color);
       scene.add(m.root);
+      m.setLights(S.lightLevel);
       return m;
     });
     S.aiWorld = w;
   }
+  for (const m of S.aiModels) m.setLights(S.lightLevel);
   S.ais = RIVALS.map((r, k) => new AiCar(S.track, eco.carById(cars[k]), S.aiModels[k], r.name, 1));
   createPlayer();
 }
@@ -202,6 +217,7 @@ function createPlayer(carId = raceCar()) {
     disposeTree(S.playerModel.root);
   }
   S.playerModel = new CarModel(carId, save.color);
+  S.playerModel.setLights(S.lightLevel);
   scene.add(S.playerModel.root);
   S.player = new PlayerCar(S.track, eco.carStats(carId), S.playerModel, CONFIG.playerName || 'You');
   S.player.on(onPlayerEvent);
@@ -217,6 +233,7 @@ function recolorRivals() {
 function placeGrid() {
   const tr = S.track;
   for (const c of tr.coins) c.taken = false;
+  SD.obstacles.reset(tr);
   const base = S.def.ai || 0.85;
   const slots = [[-3, 6], [3, 6], [-3, 15], [3, 15]];
   S.ais.forEach((a, k) => {
@@ -365,6 +382,7 @@ function autopilot() {
 
 function update(dt) {
   S.time += dt;
+  S.track.clock = S.time; // moving obstacles run on this clock (physics and models share it)
   S.shake = Math.max(0, S.shake - dt * 1.8);
   S.fovKick = Math.max(0, S.fovKick - dt * 1.5);
   if (S.hintT > 0) {
@@ -402,7 +420,7 @@ function update(dt) {
   }
 
   const go = S.mode === 'race' || S.mode === 'finished';
-  const ctx = { go, all: S.all, rubber };
+  const ctx = { go, all: S.all, rubber, onAiHit };
   for (const a of S.ais) {
     a.update(dt, ctx);
     if (go && !a.finished && a.s >= tr.finishS) {
@@ -513,6 +531,14 @@ function confetti() {
   }
 }
 
+// A rival got caught by an obstacle: sparks and a thud if it's near you.
+function onAiHit(a) {
+  if (Math.abs(a.s - S.player.s) > 70) return;
+  burst(a.pos, 16, glow, COL.spark, 10, { size: 0.3, gravity: 14, drag: 1 });
+  burst(a.pos, 8, smoke, COL.smoke, 4, { size: 1.6, grow: 3, gravity: 0, life: 1.2 });
+  Audio.sfx.clang(0.5);
+}
+
 /* ====================================================================== player events */
 function onPlayerEvent(type, d) {
   const p = S.player;
@@ -586,6 +612,35 @@ function onPlayerEvent(type, d) {
       break;
     case 'bump':
       Audio.sfx.land(d.impact * 0.5);
+      break;
+    case 'cone':
+      Audio.sfx.cone();
+      S.shake = Math.max(S.shake, 0.12);
+      break;
+    case 'barrier':
+      burst(p.pos, 20, glow, COL.spark, 10, { size: 0.3, gravity: 14, drag: 1 });
+      break;
+    case 'hammer':
+      Audio.sfx.clang(1);
+      showMsg('SMASHED!', 'small');
+      burst(p.pos, 24, glow, COL.spark, 12, { size: 0.32, gravity: 14, drag: 1 });
+      S.shake = 1;
+      vibrate(120);
+      break;
+    case 'shove':
+      Audio.sfx.wall();
+      Audio.sfx.clang(0.4);
+      burst(p.pos, 12, glow, COL.spark, 9, { size: 0.28, gravity: 12 });
+      S.shake = Math.max(S.shake, 0.5);
+      vibrate(50);
+      break;
+    case 'slick':
+      Audio.sfx.skid();
+      showMsg(d.kind === 'ice' ? 'ICE!' : 'OIL!', 'small');
+      break;
+    case 'bounce':
+      Audio.sfx.boing();
+      S.fovKick = 1;
       break;
     default:
       break;
@@ -900,7 +955,7 @@ function claimDaily(mult) {
 
 /* ---------------------------------------------------------------- garage */
 const garage = { view: 'racer', from: 'screen-title' };
-const STAT_MAX = { top: 72, accel: 36, grip: 42, air: 1.6 };
+const STAT_MAX = { top: 76, accel: 40, grip: 46, air: 1.85 };
 
 let freeTimer = null;
 function openGarage(from) {
@@ -1386,6 +1441,7 @@ function frame(now) {
   }
   updateCamera(S.paused ? 0 : dt);
   world.update(dt, S.time, camera, S.player.pos);
+  weather.update(dt, camera);
   renderer.render(scene, camera);
   const p = S.player;
   if (S.mode === 'countdown') Audio.engine(0.15, input.state.gas, false, false, 0);

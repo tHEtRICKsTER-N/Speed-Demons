@@ -101,6 +101,10 @@ const VOICES = {
   monster: { base: 24, step: 5, range: 36, types: ['sawtooth', 'square'], ratio: 0.25, bright: 0.6 },
   formula: { base: 72, step: 14, range: 115, types: ['sawtooth', 'triangle'], ratio: 1.006, bright: 1.45 },
   hyper: { base: 56, step: 12, range: 92, types: ['sawtooth', 'sawtooth'], ratio: 1.498, bright: 1.2 },
+  kart: { base: 92, step: 16, range: 125, types: ['square', 'square'], ratio: 1.012, bright: 1.3 },
+  rally: { base: 48, step: 11, range: 82, types: ['sawtooth', 'square'], ratio: 0.5, bright: 1.1 },
+  hotrod: { base: 26, step: 6, range: 44, types: ['sawtooth', 'square'], ratio: 0.5, bright: 0.7 },
+  rocket: { base: 64, step: 14, range: 112, types: ['sawtooth', 'triangle'], ratio: 2.003, bright: 1.6 },
 };
 let voice = VOICES.racer;
 function setEngineVoice(id) { voice = VOICES[id] || VOICES.racer; }
@@ -188,6 +192,18 @@ const sfx = {
   overtake() { tone(1175, 0.08, { type: 'square', vol: 0.05 }); tone(1568, 0.14, { type: 'square', vol: 0.05, delay: 0.07 }); },
   closeCall() { noise(0.35, { vol: 0.2, type: 'bandpass', freq: 3000, slide: 600, q: 2 }); tone(1760, 0.12, { type: 'triangle', vol: 0.07, delay: 0.05 }); },
   daily() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.18, { type: 'triangle', vol: 0.08, delay: i * 0.07 })); },
+  cone() { noise(0.12, { vol: 0.3, freq: 700, type: 'bandpass', q: 1.5 }); tone(220, 0.1, { type: 'triangle', vol: 0.1, slide: 150 }); },
+  clang(k = 1) {
+    tone(310, 0.5, { type: 'square', vol: 0.09 * k, slide: 260 });
+    tone(743, 0.35, { type: 'triangle', vol: 0.08 * k });
+    noise(0.25, { vol: 0.3 * k, freq: 2400, type: 'bandpass', q: 3 });
+  },
+  boing() { tone(180, 0.45, { type: 'sine', vol: 0.2, slide: 620 }); tone(360, 0.3, { type: 'triangle', vol: 0.06, slide: 1200, delay: 0.05 }); },
+  skid() { noise(0.7, { vol: 0.22, type: 'bandpass', freq: 1800, slide: 900, q: 6 }); },
+  thunder(delay = 0) {
+    noise(2.6, { vol: 0.45, freq: 160, slide: 50, delay });
+    noise(0.5, { vol: 0.3, freq: 1400, slide: 180, delay });
+  },
   draft() { noise(0.3, { vol: 0.12, type: 'bandpass', freq: 900, slide: 2200, q: 1.2 }); },
   pad() { noise(0.5, { vol: 0.25, type: 'bandpass', freq: 400, slide: 3500, q: 2 }); },
   checkpoint() { tone(988, 0.1, { type: 'square', vol: 0.06 }); tone(1319, 0.18, { type: 'square', vol: 0.06, delay: 0.09 }); },

@@ -32,6 +32,7 @@ class TrackBuilder {
     this.checkpoints = [];
     this.pads = [];
     this.coinList = [];
+    this.obstacles = [];
     this.rings = [];
     this.features = []; // {s0, s1, kind} - AI uses these to keep speed up
     this._emit(false);
@@ -188,6 +189,37 @@ class TrackBuilder {
     return this;
   }
 
+  /* ---- obstacles: placed `at` metres ahead of the current point (they don't lay any road,
+   * so keep building straight road past them). See obstacles.js for how each behaves. */
+  _ob(o) {
+    o.phase = o.phase ?? this.obstacles.length * 1.37; // desynchronise moving obstacles
+    this.obstacles.push(o);
+    return this;
+  }
+
+  // pattern: 'line' (down the road), 'slalom' (alternating sides), 'wall' (a row across)
+  cones(count = 5, pattern = 'line', d = 0, at = 10, spacing = 6) {
+    for (let k = 0; k < count; k++) {
+      let s = this.len + at;
+      let dd = d;
+      if (pattern === 'wall') dd = d + (k - (count - 1) / 2) * 1.3;
+      else {
+        s += k * spacing;
+        if (pattern === 'slalom') dd = d + (k % 2 ? 2.2 : -2.2);
+      }
+      this.obstacles.push({ type: 'cone', s, d: dd });
+    }
+    return this;
+  }
+
+  barrier(d = 0, hw = 1.5, at = 12) { return this._ob({ type: 'barrier', s: this.len + at, d, hw }); }
+  hammer(at = 20, period = 2.6) { return this._ob({ type: 'hammer', s: this.len + at, period }); }
+  slider(at = 20, period = 2.8, hw = 1.5) { return this._ob({ type: 'slider', s: this.len + at, period, hw, amp: this.targetW - hw - 0.2 }); }
+  // the bar stops short of the edges: hug an edge to pass safely, or time the gap for the short line
+  spinner(at = 20, period = 3.8) { return this._ob({ type: 'spinner', s: this.len + at, period: Math.max(period, 3.6), r: this.targetW - 2.0 }); }
+  slick(d = 0, len = 14, hw = 2.2, kind = 'oil', at = 8) { return this._ob({ type: 'slick', s: this.len + at, d, len, hw, kind }); }
+  bouncer(d = 0, at = 10) { return this._ob({ type: 'bouncer', s: this.len + at, d }); }
+
   width(w) { this.targetW = w; return this; }
   walls(on) { this.wallsOn = on; return this; }
   checkpoint() { this.checkpoints.push(this.len); return this; }
@@ -293,6 +325,11 @@ class Track {
     this.pads = b.pads;
     this.rings = b.rings.map((r) => ({ ...r }));
     this.features = b.features;
+    this.clock = 0; // seconds; drives moving obstacles (set by the game every step)
+    this.obstacles = (b.obstacles || [])
+      .filter((o) => o.s > this.startS + 15 && o.s < this.finishS - 5 && !this.gap[this.index(o.s)])
+      .map((o) => ({ ...o, knocked: false, knockAt: 0, knockDir: 1 }))
+      .sort((a, c) => a.s - c.s);
 
     const f = makeFrame();
     this.coins = b.coinList
@@ -435,6 +472,45 @@ function bannerTexture(label, bg, fg, checker) {
   }, false);
 }
 
+// Chevron arrows for turn warning boards (pointing right; mirrored for left turns).
+function chevronTexture(bg, fg) {
+  return canvasTex(256, 96, (x, W, H) => {
+    x.fillStyle = bg;
+    x.fillRect(0, 0, W, H);
+    x.fillStyle = fg;
+    for (let i = 0; i < 3; i++) {
+      const x0 = 40 + i * 70;
+      x.beginPath();
+      x.moveTo(x0, 12);
+      x.lineTo(x0 + 34, H / 2);
+      x.lineTo(x0, H - 12);
+      x.lineTo(x0 + 18, H - 12);
+      x.lineTo(x0 + 52, H / 2);
+      x.lineTo(x0 + 18, 12);
+      x.closePath();
+      x.fill();
+    }
+    x.strokeStyle = fg;
+    x.lineWidth = 8;
+    x.strokeRect(4, 4, W - 8, H - 8);
+  }, false);
+}
+
+let lampGlowTex = null;
+function lampGlowTexture() {
+  if (!lampGlowTex) {
+    lampGlowTex = canvasTex(64, 64, (x, W) => {
+      const g = x.createRadialGradient(W / 2, W / 2, 0, W / 2, W / 2, W / 2);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.25, 'rgba(255,255,255,0.5)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g;
+      x.fillRect(0, 0, W, W);
+    }, false);
+  }
+  return lampGlowTex;
+}
+
 function checkerTexture() {
   return canvasTex(64, 64, (x) => {
     for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
@@ -540,7 +616,10 @@ function buildTrackMesh(track, theme, opts = {}) {
   top.setIndex(idx);
   const roadMap = roadTexture(theme, false);
   roadMap.anisotropy = anis;
-  const roadMat = new THREE.MeshStandardMaterial({ map: roadMap, roughness: 0.82, metalness: 0.02 });
+  // In rain the road turns dark and glossy, mirroring the sky and lights.
+  const roadMat = opts.wet
+    ? new THREE.MeshStandardMaterial({ map: roadMap, color: '#b8bcc8', roughness: 0.3, metalness: 0.25, envMapIntensity: 1.4 })
+    : new THREE.MeshStandardMaterial({ map: roadMap, roughness: 0.82, metalness: 0.02 });
   if (theme.neon) {
     const glow = roadTexture(theme, true);
     glow.anisotropy = anis;
@@ -636,6 +715,101 @@ function buildTrackMesh(track, theme, opts = {}) {
     group.add(pm);
   }
 
+  // ---- chevron boards on the outside of sharp turns, a little before the turn starts
+  const signs = [];
+  {
+    const SHARP = 0.011; // sideways curvature (1/m): radius under about 90 m
+    let lastSign = -1e9;
+    for (let i = 40; i < n - 1; i++) {
+      const k = track.kg[i];
+      if (Math.abs(k) < SHARP || Math.abs(track.kg[i - 1]) >= SHARP) continue;
+      const at = i - 22;
+      if (at * STEP - lastSign < 80 || gap[at] || track.grip[at] > 0 || walls[at] || at * STEP > track.finishS) continue;
+      lastSign = at * STEP;
+      signs.push({ s: at * STEP, side: k > 0 ? -1 : 1, right: k > 0 });
+    }
+  }
+  if (signs.length) {
+    const board = new THREE.PlaneGeometry(3.2, 1.2);
+    const tex = chevronTexture(theme.signBg || '#ffd400', theme.signFg || '#1b1b2f');
+    const texL = tex.clone();
+    texL.needsUpdate = true;
+    texL.wrapS = THREE.RepeatWrapping;
+    texL.repeat.x = -1;
+    const matR = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+    const matL = new THREE.MeshBasicMaterial({ map: texL, toneMapped: false });
+    const postGeo = new THREE.BoxGeometry(0.16, 2.2, 0.16);
+    const postMat = new THREE.MeshStandardMaterial({ color: '#555c6e', roughness: 0.6, metalness: 0.5 });
+    const f = makeFrame();
+    for (const sg of signs) {
+      track.frameAt(sg.s, f);
+      const grp = new THREE.Group();
+      const b = new THREE.Mesh(board, sg.right ? matR : matL);
+      b.position.y = 2.2;
+      const back = new THREE.Mesh(board, postMat);
+      back.position.set(0, 2.2, -0.03);
+      back.rotation.y = Math.PI;
+      for (const px of [-1.1, 1.1]) {
+        const post = new THREE.Mesh(postGeo, postMat);
+        post.position.set(px, 1.1, -0.05);
+        grp.add(post);
+      }
+      grp.add(b, back);
+      grp.position.copy(f.p).addScaledVector(f.R, sg.side * (f.w + 1.9));
+      // right-handed basis: x = R (board's right = driver's right), y = N, z = -T (faces oncoming cars)
+      grp.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(f.R, f.N, f.T.clone().negate()));
+      group.add(grp);
+    }
+  }
+
+  // ---- lamp posts with glowing heads on dark tracks
+  if (theme.lamps) {
+    const lamps = [];
+    const f = makeFrame();
+    let side = 1;
+    for (let s = track.startS + 20; s < track.finishS + 60; s += 42) {
+      const i = track.index(s);
+      if (gap[i] || track.grip[i] > 0 || N[i].y < 0.85) continue;
+      track.frameAt(s, f);
+      lamps.push({ p: f.p.clone(), R: f.R.clone(), N: f.N.clone(), T: f.T.clone(), w: f.w, side });
+      side = -side;
+    }
+    if (lamps.length) {
+      const poleGeo = new THREE.CylinderGeometry(0.1, 0.14, 6.5, 6);
+      poleGeo.translate(0, 3.25, 0);
+      const armGeo = new THREE.BoxGeometry(1.8, 0.12, 0.12);
+      armGeo.translate(-0.9, 6.4, 0);
+      const headGeo = new THREE.BoxGeometry(0.7, 0.18, 0.4);
+      headGeo.translate(-1.7, 6.3, 0);
+      const metal = new THREE.MeshStandardMaterial({ color: '#3b4152', roughness: 0.5, metalness: 0.6 });
+      const lampColor = theme.lampColor || '#fff1c4';
+      const headMat = new THREE.MeshBasicMaterial({ color: lampColor, toneMapped: false });
+      const poles = new THREE.InstancedMesh(poleGeo, metal, lamps.length);
+      const arms = new THREE.InstancedMesh(armGeo, metal, lamps.length);
+      const heads = new THREE.InstancedMesh(headGeo, headMat, lamps.length);
+      const glowPos = [];
+      const m = new THREE.Matrix4();
+      const basis = new THREE.Matrix4();
+      lamps.forEach((l, k) => {
+        // local x points in over the road
+        const inward = l.R.clone().multiplyScalar(-l.side);
+        basis.makeBasis(inward.clone().negate(), l.N, inward.clone().cross(l.N).negate());
+        const pos = l.p.clone().addScaledVector(l.R, l.side * (l.w + 0.8));
+        m.copy(basis).setPosition(pos);
+        poles.setMatrixAt(k, m);
+        arms.setMatrixAt(k, m);
+        heads.setMatrixAt(k, m);
+        const g = pos.clone().addScaledVector(inward, 1.7).addScaledVector(l.N, 6.1);
+        glowPos.push(g.x, g.y, g.z);
+      });
+      group.add(poles, arms, heads);
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', new THREE.Float32BufferAttribute(glowPos, 3));
+      const glows = new THREE.Points(gg, new THREE.PointsMaterial({ map: lampGlowTexture(), color: lampColor, size: 9, sizeAttenuation: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+      group.add(glows);
+    }
+  }
+
   // ---- start / finish lines and arches
   const lineMat = (map) => new THREE.MeshBasicMaterial({ map, polygonOffset: true, polygonOffsetFactor: -2, toneMapped: false });
   const checker = checkerTexture();
@@ -664,6 +838,9 @@ function buildTrackMesh(track, theme, opts = {}) {
     return m;
   });
 
+  // ---- obstacles (models + animation live in obstacles.js)
+  const obstacleUpdate = SD.obstacles ? SD.obstacles.buildMeshes(track, theme, group) : null;
+
   // ---- collectible coins (instanced, animated every frame)
   const coinMesh = new THREE.InstancedMesh(coinGeometry(), new THREE.MeshStandardMaterial({ color: '#ffc933', emissive: '#c77800', emissiveIntensity: 0.55, metalness: 0.65, roughness: 0.28 }), Math.max(1, track.coins.length));
   coinMesh.count = track.coins.length;
@@ -686,6 +863,7 @@ function buildTrackMesh(track, theme, opts = {}) {
     group,
     update(dt, time) {
       padTex.offset.y -= dt * 1.6;
+      if (obstacleUpdate) obstacleUpdate(dt, track.clock);
       for (const m of ringMeshes) m.rotateZ(dt * 0.8);
       track.coins.forEach((st, k) => {
         if (st.taken) {

@@ -7,13 +7,79 @@ const { G, STEP, makeFrame } = SD.track;
 const { clamp, damp, rand, smooth, TAU } = SD.util;
 
 const DRIFT = 0.45; // how strongly corners push you wide (arcade-friendly < 1)
-const MAX_GROUND = 72; // m/s hard cap, even with nitro + pads + downhill
+const MAX_GROUND = 78; // m/s hard cap, even with nitro + pads + downhill
 const JUMP_MAX = 50; // launch speed cap off ramps, so every jump lands on its landing zone
 const CREST_MAX = 58; // same idea for the rare hop over a sharp hill crest
 const DOWNFORCE = 0.004; // keeps you planted over crests at speed - air comes from ramps
 const AI_TOP = 52; // AI pace reference (m/s); their car model is cosmetic
 const FALL_TIME = 1.4; // seconds of falling (after missing the road) before the respawn
 const GHOST_TIME = 2; // seconds of blinking, un-bumpable car after a respawn
+const OBS = () => SD.obstacles; // loaded after this file's helpers are defined
+
+// Lane choice around static obstacles (cones, barriers, slicks): looks at the next cluster of
+// them (within `ahead` m) and returns the nearest lateral line with room for a car, or null if the
+// line `d` is already clear. One cluster at a time, so a car can weave through a slalom.
+function planLane(track, s, d, ahead = 80) {
+  const spans = [];
+  let first = null;
+  for (const o of track.obstacles) {
+    if (o.s < s - 3) continue;
+    if (o.s > s + ahead || (first !== null && o.s > first + 10)) break;
+    const sp = OBS().blockSpan(o);
+    if (!sp) continue;
+    if (first === null) first = o.s;
+    spans.push(sp);
+  }
+  if (!spans.length) return null;
+  const need = 1.35; // half a car plus a margin
+  const w = track.w[track.index(first)] - 1.1;
+  const room = (x) => spans.reduce((m, [a, b]) => Math.min(m, x < a ? a - x : x > b ? x - b : 0), Infinity);
+  if (room(d) >= need) return null;
+  let best = d;
+  let bestScore = -Infinity;
+  for (let x = -w; x <= w + 1e-6; x += w / 8) {
+    const r = room(x);
+    const score = (r >= need ? 10 : r) - 0.15 * Math.abs(x - d);
+    if (score > bestScore) {
+      bestScore = score;
+      best = x;
+    }
+  }
+  return best;
+}
+
+// Moving obstacles (hammers, sliders, spinners) in the next 55 m: predict where they'll be when
+// we get there. Tries full speed first, then easing off (arriving later), and returns
+// { lane, speed } for the fastest reachable line that's clear the whole time we're passing
+// (speed null = no need to slow), null if the current line is already fine, or { slow: true }.
+function planDodge(track, s, d, v, t) {
+  const O = OBS();
+  for (const o of track.obstacles) {
+    if (o.s < s - 3) continue;
+    if (o.s > s + 55) break;
+    if (O.STATIC[o.type] || o.type === 'bouncer') continue;
+    const dist = Math.max(0, o.s - s);
+    const w = track.w[track.index(o.s)] - 1.1;
+    for (const k of [1, 0.85, 0.7, 0.55]) {
+      const vv = Math.max(v * k, 8);
+      const tArr = t + dist / vv;
+      // sweep the car through the obstacle: nose to tail, each point at the time it gets there
+      const clearAt = (x) => {
+        for (let ds = -3.5; ds <= 3.51; ds += 0.875) if (O.hitTest(o, o.s + ds, x, tArr + ds / vv)) return false;
+        return true;
+      };
+      if (k === 1 && clearAt(d)) return null;
+      const reach = (5.5 * dist) / vv + 0.3;
+      let best = null;
+      for (let x = -w; x <= w + 1e-6; x += w / 6) {
+        if (Math.abs(x - d) <= reach && clearAt(x) && (best === null || Math.abs(x - d) < Math.abs(best - d))) best = x;
+      }
+      if (best !== null) return { lane: best, speed: k < 1 ? vv : null };
+    }
+    return { slow: true };
+  }
+  return null;
+}
 const V3 = THREE.Vector3;
 const tv = new V3();
 const tv2 = new V3();
@@ -72,6 +138,9 @@ class PlayerCar {
     this.crashT = 0;
     this.fallT = 0;
     this.ghostT = 0;
+    this.slipT = 0; // on oil / ice: steering goes loose
+    this.hitCool = 0; // brief immunity after an obstacle hit (no double hits)
+    this.knockVd = 0; // sideways knock from a hammer, applied while crashing
     this.model.root.visible = true;
     this.lastCheckpoint = this.track.startS;
     this.finished = false;
@@ -91,6 +160,8 @@ class PlayerCar {
 
   update(dt, inp) {
     this.padT = Math.max(0, this.padT - dt);
+    this.hitCool = Math.max(0, this.hitCool - dt);
+    this.slipT = Math.max(0, this.slipT - dt);
     this.comboT -= dt;
     if (this.comboT <= 0) this.combo = 0;
     if (this.mode === 'ground') this.updateGround(dt, inp);
@@ -133,8 +204,12 @@ class PlayerCar {
 
     // Steering fights the sideways push of corners; banking helps.
     const gravSide = f.grip > 0 ? 0.4 : 1;
-    const lat = inp.steer * type.grip * clamp(this.v / 14, 0.3, 1) + DRIFT * (-f.kg * this.v * this.v - G * f.R.y * gravSide);
-    this.vd = (this.vd + lat * dt) * Math.exp(-5 * dt);
+    const slip = this.slipT > 0;
+    const resist = type.slipResist || 0;
+    const steerGrip = slip ? 0.2 + 0.7 * resist : 1; // on oil or ice the wheels barely bite
+    let lat = inp.steer * type.grip * steerGrip * clamp(this.v / 14, 0.3, 1) + DRIFT * (-f.kg * this.v * this.v - G * f.R.y * gravSide);
+    if (slip) lat += Math.sin((tr.clock || 0) * 7 + this.s * 0.05) * 16 * (1 - resist); // fishtailing
+    this.vd = (this.vd + lat * dt) * Math.exp(-(slip ? 1.5 : 5) * dt);
     this.d += this.vd * dt;
     this.s = Math.min(this.s + this.v * dt, tr.length - 1);
     this.steerVis = damp(this.steerVis, inp.steer, 10, dt);
@@ -163,8 +238,75 @@ class PlayerCar {
       this.takeoff(f, f.gap ? 'gap' : 'crest');
       return;
     }
+    if (this.checkObstacles(f)) return;
     this.syncGround(f);
     this.checkTrackEvents();
+  }
+
+  /* ---------------------------------------------------------------- obstacles */
+  // Returns true when a hit changed the car's mode (crash / launch), ending this step.
+  checkObstacles(f) {
+    const tr = this.track;
+    if (!tr.obstacles.length) return false;
+    const t = tr.clock || 0;
+    const O = OBS();
+    for (const o of tr.obstacles) {
+      if (o.s < this.s - 14) continue;
+      if (o.s > this.s + 14) break;
+      const kind = O.KIND[o.type];
+      if (this.hitCool > 0 && kind !== 'slip' && kind !== 'knock') continue;
+      if (this.ghostT > 0 && (kind === 'crash' || kind === 'shove')) continue;
+      const hit = O.hitTest(o, this.s, this.d, t);
+      if (!hit) continue;
+      switch (o.type) {
+        case 'cone':
+          o.knocked = true;
+          o.knockAt = t;
+          o.knockDir = hit.dir;
+          this.v *= 0.93;
+          this.emit('cone', { pos: this.pos });
+          break;
+        case 'barrier': {
+          // stop short of it and end up beside it, so recovering doesn't drive straight back in
+          const hw = f.w - 1.05;
+          let side = hit.dir;
+          if (Math.abs(o.d + side * (o.hw + 1.3)) > hw) side = -side;
+          this.crash();
+          this.v = 0;
+          this.s = Math.min(this.s, o.s - 2.9);
+          this.d = clamp(o.d + side * (o.hw + 1.3), -hw, hw);
+          this.hitCool = 2;
+          this.emit('barrier', { pos: this.pos });
+          return true;
+        }
+        case 'hammer':
+          this.crash();
+          this.knockVd = hit.dir * 7.5; // smashed about 3 m sideways - off the road if you were near the edge
+          this.hitCool = 2;
+          this.emit('hammer', { pos: this.pos });
+          return true;
+        case 'slider':
+        case 'spinner':
+          this.vd = hit.dir * (o.type === 'slider' ? 11 : 10);
+          this.v *= o.type === 'slider' ? 0.75 : 0.6;
+          this.hitCool = 0.8;
+          this.emit('shove', { pos: this.pos, hit: 8 });
+          break;
+        case 'slick':
+          if (this.slipT <= 0) this.emit('slick', { kind: o.kind });
+          this.slipT = 0.8;
+          break;
+        case 'bouncer':
+          this.takeoff(f, 'bounce');
+          this.vel.addScaledVector(f.N, 14);
+          this.hitCool = 1;
+          this.emit('bounce');
+          return true;
+        default:
+          break;
+      }
+    }
+    return false;
   }
 
   syncGround(f = this.track.frameAt(this.s, this.f)) {
@@ -372,6 +514,25 @@ class PlayerCar {
       return;
     }
     const f = tr.frameAt(this.s, this.f);
+    if (this.knockVd) {
+      this.d += this.knockVd * dt;
+      this.knockVd *= Math.exp(-2.5 * dt);
+      if (Math.abs(this.knockVd) < 0.3) this.knockVd = 0;
+      if (Math.abs(this.d) > f.w + 0.35) {
+        if (f.walls) {
+          this.d = Math.sign(this.d) * (f.w - 1.05);
+          this.knockVd = 0;
+        } else {
+          // knocked clean off the road
+          this.mode = 'ground';
+          this.vd = this.knockVd;
+          this.knockVd = 0;
+          this.v = Math.max(this.v, 6);
+          this.takeoff(f, 'edge');
+          return;
+        }
+      }
+    }
     const t = Math.min(1, this.crashT / dur);
     this.heading += this.crashSpin * (1 - t) * (dt / dur);
     this.pos.copy(f.p).addScaledVector(f.R, this.d).addScaledVector(f.N, Math.abs(Math.sin(t * Math.PI * 3)) * (1 - t) * 1.2);
@@ -463,6 +624,11 @@ class AiCar {
     this.spinDir = 0;
     this.spinT = 0;
     this.laneT = rand(3, 6);
+    this.wipeT = 0; // spinning out after hitting an obstacle
+    this.wipeDir = 1;
+    this.hitCool = 0;
+    this.focusT = rand(2, 6);
+    this.careless = false; // now and then a rival doesn't see an obstacle coming
     this.sync(0);
   }
 
@@ -504,11 +670,33 @@ class AiCar {
         break;
       }
     }
+    // steer round cones, barriers and slicks; time moving obstacles (unless it's a careless moment)
+    if (tr.obstacles.length) {
+      const lane = planLane(tr, this.s, this.lane);
+      if (lane !== null) this.lane = lane;
+      this.focusT -= dt;
+      if (this.focusT <= 0) {
+        this.focusT = rand(4, 8);
+        this.careless = Math.random() < 0.2;
+      }
+      if (!this.careless && ctx.go) {
+        const plan = planDodge(tr, this.s, this.d, this.v, tr.clock || 0);
+        if (plan && plan.lane !== undefined) {
+          this.lane = plan.lane;
+          if (plan.speed) this.v = Math.max(plan.speed, this.v - 26 * dt);
+        } else if (plan && plan.slow) this.v = Math.max(this.v - 20 * dt, 20);
+      }
+    }
     const w = tr.w[i] - 1.2;
     this.lane = clamp(this.lane, -w, w);
     const d0 = this.d;
-    this.d = clamp(damp(this.d, this.lane, 1.8, dt), -w, w);
+    // steer harder while dodging an obstacle
+    const dodging = tr.obstacles.length && Math.abs(this.lane - this.d) > 0.3 && tr.obstacles.some((o) => o.s > this.s && o.s < this.s + 60);
+    this.d = clamp(damp(this.d, this.lane, this.wipeT > 0 ? 0.5 : dodging ? 4 : 2.6, dt), -w, w);
     this.s = Math.min(this.s + this.v * dt, tr.length - 1);
+    this.wipeT = Math.max(0, this.wipeT - dt);
+    this.hitCool = Math.max(0, this.hitCool - dt);
+    if (tr.obstacles.length && !this.air && this.hitCool <= 0) this.checkObstacles(ctx);
 
     this.air = tr.isGap(this.s);
     if (this.air && !this.wasAir) {
@@ -522,10 +710,46 @@ class AiCar {
     this.model.update(dt, { speed: this.v, steer: clamp(latV * 0.4, -1, 1), accel: 0, braking: false, nitro: false, grounded: !this.air });
   }
 
+  // Rivals knock cones too, and spin out when a hammer, slider, spinner or barrier gets them.
+  checkObstacles(ctx) {
+    const tr = this.track;
+    const O = OBS();
+    const t = tr.clock || 0;
+    for (const o of tr.obstacles) {
+      if (o.s < this.s - 14) continue;
+      if (o.s > this.s + 14) break;
+      if (o.type === 'bouncer') continue;
+      const hit = O.hitTest(o, this.s, this.d, t);
+      if (!hit) continue;
+      if (o.type === 'cone') {
+        o.knocked = true;
+        o.knockAt = t;
+        o.knockDir = hit.dir;
+        this.v *= 0.95;
+        continue;
+      }
+      if (o.type === 'slick') {
+        this.v *= 0.985;
+        continue;
+      }
+      this.wipeT = 1.1;
+      this.wipeDir = hit.dir || 1;
+      this.v *= 0.45;
+      this.hitCool = 1.6;
+      if (o.type === 'barrier') this.d = clamp(o.d + (hit.dir || 1) * (o.hw + 1.3), -(tr.w[tr.index(this.s)] - 1.2), tr.w[tr.index(this.s)] - 1.2);
+      if (ctx.onAiHit) ctx.onAiHit(this, o);
+      return;
+    }
+  }
+
   sync(latV) {
     const f = this.track.frameAt(this.s, this.f);
     this.pos.copy(f.p).addScaledVector(f.R, this.d);
     orient(this.quat, f.T, f.N, f.R, Math.atan2(latV, Math.max(this.v, 6)) * 0.9);
+    if (this.wipeT > 0) {
+      tq.setFromAxisAngle(Y, this.wipeDir * TAU * smooth(1 - this.wipeT / 1.1));
+      this.quat.multiply(tq);
+    }
     if (this.air && this.spinDir) {
       tq.setFromAxisAngle(Y, this.spinDir * TAU * smooth(Math.min(1, this.spinT / 0.65)));
       this.quat.multiply(tq);
@@ -596,5 +820,5 @@ function separateAis(ais) {
   }
 }
 
-SD.physics = { PlayerCar, AiCar, collide, separateAis };
+SD.physics = { PlayerCar, AiCar, collide, separateAis, planLane, planDodge };
 })();
