@@ -12,6 +12,8 @@ const JUMP_MAX = 50; // launch speed cap off ramps, so every jump lands on its l
 const CREST_MAX = 58; // same idea for the rare hop over a sharp hill crest
 const DOWNFORCE = 0.004; // keeps you planted over crests at speed - air comes from ramps
 const AI_TOP = 52; // AI pace reference (m/s); their car model is cosmetic
+const FALL_TIME = 1.4; // seconds of falling (after missing the road) before the respawn
+const GHOST_TIME = 2; // seconds of blinking, un-bumpable car after a respawn
 const V3 = THREE.Vector3;
 const tv = new V3();
 const tv2 = new V3();
@@ -68,6 +70,9 @@ class PlayerCar {
     this.lastPad = null;
     this.airTime = 0;
     this.crashT = 0;
+    this.fallT = 0;
+    this.ghostT = 0;
+    this.model.root.visible = true;
     this.lastCheckpoint = this.track.startS;
     this.finished = false;
     this.finishTime = 0;
@@ -92,6 +97,10 @@ class PlayerCar {
     else if (this.mode === 'air') this.updateAir(dt, inp);
     else this.updateCrash(dt);
     this.checkPickups();
+    if (this.ghostT > 0) {
+      this.ghostT = Math.max(0, this.ghostT - dt);
+      this.model.root.visible = this.ghostT === 0 || Math.floor(this.ghostT * 12) % 2 === 0;
+    }
     this.model.root.position.copy(this.pos);
     this.model.root.quaternion.copy(this.quat);
     this.model.update(dt, {
@@ -200,6 +209,8 @@ class PlayerCar {
     this.trickR = 0;
     this.latch = true;
     this.boosting = false;
+    this.fallT = 0;
+    this.offEdge = reason === 'edge';
     this.guess = this.track.index(this.s);
     this.prevH = 0.2;
     this.emit('takeoff');
@@ -236,20 +247,36 @@ class PlayerCar {
     const along = tv.dot(T);
 
     // Landing assist: when you're not tricking, gently line the car up with the road.
-    if (!(ctl && anyInput)) {
+    // A car that has missed the road tumbles nose-first instead.
+    if (this.fallT > 0) {
+      tq.setFromEuler(te.set(-1.6 * dt, 0, this.tumble * dt));
+      this.quat.multiply(tq);
+    } else if (!(ctl && anyInput)) {
       orient(tq2, T, N, R, 0);
       this.quat.slerp(tq2, 1 - Math.exp(-3.2 * dt));
     }
     this.up.copy(Y);
     if (this.vel.lengthSq() > 1) this.fwd.copy(this.vel).normalize();
 
-    const solid = !tr.gap[i] && Math.abs(lat) < tr.w[i] + 0.6;
-    if (solid && h <= 0.05 && this.prevH > -0.6) {
+    // Land only when coming down onto the road from above. A car arriving from underneath
+    // (a jump that fell short, or after driving off the edge) falls on past the ramp.
+    // After driving off the side, only the road proper counts - no hopping back on from the edge.
+    const solid = !tr.gap[i] && Math.abs(lat) < (this.offEdge ? tr.w[i] - 0.5 : tr.w[i] + 0.6);
+    if (solid && h <= 0.05 && this.prevH > -0.15 && this.fallT === 0) {
       this.land(i, along, lat);
       return;
     }
     this.prevH = h;
-    if (this.pos.y < tr.minY - 70 || this.airTime > 9) {
+    // Under the road = the road was missed: let the car drop away for a moment, then respawn.
+    if (h < -1.5) {
+      if (this.fallT === 0) {
+        this.tumble = (Math.random() < 0.5 ? -1 : 1) * rand(0.6, 1.4);
+        this.combo = 0;
+        this.emit('miss');
+      }
+      this.fallT += dt;
+    }
+    if (this.fallT > FALL_TIME || this.pos.y < tr.minY - 70 || this.airTime > 9) {
       this.emit('fall');
       this.respawn();
     }
@@ -269,7 +296,7 @@ class PlayerCar {
     const impact = Math.max(0, -this.vel.dot(N));
     const quick = this.airTime < 0.25;
     this.s = clamp(i * STEP + along, 0, tr.length - 1);
-    this.d = clamp(lat, -(tr.w[i] - 1.05), tr.w[i] - 1.05);
+    this.d = clamp(lat, -(tr.w[i] + 0.3), tr.w[i] + 0.3); // no sideways snap; walls push back on the next step
     const tol = this.type.landTol || 1; // monster trucks shrug off crooked landings
     if (!quick && (align < 0.3 / tol || headingDot < 0.2 / tol)) {
       this.crash();
@@ -358,6 +385,7 @@ class PlayerCar {
       this.mode = 'ground';
       this.heading = 0;
       this.v = Math.max(this.v, 14);
+      this.ghostT = Math.max(this.ghostT, 1.2);
       this.emit('recover');
     }
   }
@@ -371,6 +399,9 @@ class PlayerCar {
     this.heading = 0;
     this.combo = 0;
     this.lastPad = null;
+    this.fallT = 0;
+    this.ghostT = GHOST_TIME;
+    this.model.root.visible = true;
     this.guess = this.track.index(this.s);
     this.syncGround();
     this.emit('respawn');
@@ -506,7 +537,8 @@ class AiCar {
 
 // Simple side-by-side / rear-end contact between the player and AI cars.
 function collide(player, ais, onBump) {
-  if (player.mode !== 'ground') return;
+  if (player.mode !== 'ground' || player.ghostT > 0) return;
+  const d0 = player.d;
   for (const a of ais) {
     if (a.air) continue;
     const ds = a.s - player.s;
@@ -533,7 +565,36 @@ function collide(player, ais, onBump) {
       onBump(1.5);
     }
   }
+  // Bumps can't shove you off an open edge - only your own steering can.
+  if (player.d !== d0) {
+    const tr = player.track;
+    const lim = Math.max(tr.w[tr.index(player.s)] - 1.05, Math.abs(d0));
+    player.d = clamp(player.d, -lim, lim);
+  }
 }
 
-SD.physics = { PlayerCar, AiCar, collide };
+// Rivals don't drive through each other either: side-by-side cars push apart, and a car
+// running into the back of another slows to its speed.
+function separateAis(ais) {
+  for (let i = 0; i < ais.length; i++) {
+    for (let j = i + 1; j < ais.length; j++) {
+      const a = ais[i];
+      const b = ais[j];
+      if (a.air || b.air) continue;
+      const ds = b.s - a.s;
+      const dd = b.d - a.d;
+      if (Math.abs(ds) > 4.4 || Math.abs(dd) > 2.0) continue;
+      const push = (2.0 - Math.abs(dd)) * 0.5 * (dd >= 0 ? 1 : -1);
+      a.d -= push;
+      b.d += push;
+      a.lane = a.d;
+      b.lane = b.d;
+      const back = ds > 0 ? a : b;
+      const front = ds > 0 ? b : a;
+      if (Math.abs(dd) < 1.4 && back.v > front.v) back.v = front.v * 0.98;
+    }
+  }
+}
+
+SD.physics = { PlayerCar, AiCar, collide, separateAis };
 })();

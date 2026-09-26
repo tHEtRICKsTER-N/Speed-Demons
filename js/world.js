@@ -127,7 +127,10 @@ class World {
       this.scene.remove(this.group);
       this.group.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
-        if (o.material && o.material.map && o.material.map !== this.cloudTex) o.material.map.dispose();
+        if (o.material) {
+          if (o.material.map && o.material.map !== this.cloudTex) o.material.map.dispose();
+          o.material.dispose();
+        }
       });
     }
     const g = (this.group = new THREE.Group());

@@ -11,7 +11,7 @@ const { THEMES, WORLDS, TRACKS, buildTrack } = SD.tracks;
 const { CAR_TYPES, COLORS, CarModel } = SD.cars;
 const { World } = SD.world;
 const { Particles } = SD.fx;
-const { PlayerCar, AiCar, collide } = SD.physics;
+const { PlayerCar, AiCar, collide, separateAis } = SD.physics;
 const { Input } = SD.input;
 
 const $ = (id) => document.getElementById(id);
@@ -360,6 +360,7 @@ function update(dt) {
         Audio.sfx.count(after);
       } else {
         S.mode = 'race';
+        $('btn-respawn').hidden = false;
         showMsg('GO!');
         Audio.sfx.count(0);
       }
@@ -384,6 +385,7 @@ function update(dt) {
       a.finishTime = S.raceTime;
     }
   }
+  separateAis(S.ais);
 
   if (S.mode === 'race') {
     collide(p, S.ais, (hit) => {
@@ -498,9 +500,12 @@ function onPlayerEvent(type, d) {
       burst(p.pos, 16, smoke, COL.smoke, 5, { size: 1.8, grow: 3, gravity: 0, life: 1.4 });
       vibrate(80);
       break;
-    case 'fall':
+    case 'miss': // missed the road: the car drops away, then respawns (see 'fall')
       showMsg('WHOOPS!', 'small');
       Audio.sfx.whoosh();
+      break;
+    case 'fall':
+      Audio.sfx.checkpoint();
       break;
     case 'respawn':
       S.camSnap = true;
@@ -580,6 +585,13 @@ function updateCamera(dt) {
     return;
   }
   const air = p.mode === 'air';
+  if (air && p.fallT > 0) {
+    // missed the road: hold the camera where it is and watch the car drop away
+    camera.position.copy(cam.pos);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(p.pos);
+    return;
+  }
   const speed = p.speed;
   const upT = air ? WORLD_UP : p.up;
   const fwdT = cTmp.copy(p.fwd);
@@ -659,7 +671,7 @@ function updateHUD() {
   const mult = Math.min(4, 1 + (p.combo - 1) * 0.5);
   setText(hud.combo, 'combo', p.combo > 1 ? `COMBO x${mult}` : '');
   setText(hud.speed, 'speed', String(Math.round(p.speed * 3.6)));
-  setText(hud.air, 'air', p.mode === 'air' && p.airTime > 0.6 ? `AIR ${p.airTime.toFixed(1)}s` : '');
+  setText(hud.air, 'air', p.mode === 'air' && p.airTime > 0.6 && !p.fallT ? `AIR ${p.airTime.toFixed(1)}s` : '');
   const n = Math.round(p.nitro);
   if (hudCache.nitro !== n) {
     hudCache.nitro = n;
@@ -724,7 +736,7 @@ function updateOverlays() {
     hud.hint.classList.remove('show');
     S.hintT = 0;
   }
-  $('btn-respawn').hidden = !racing;
+  $('btn-respawn').hidden = S.mode !== 'race'; // nothing to go back to during the countdown
 }
 
 /* ====================================================================== menus */
