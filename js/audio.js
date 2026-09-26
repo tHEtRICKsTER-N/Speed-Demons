@@ -92,12 +92,25 @@ function loopNoise(type, freq, q) {
 }
 
 /* ------------------------------------------------------------------ engine */
+// Each car has its own engine note: base pitch, pitch per gear, rev range, the two oscillator
+// shapes, the second oscillator's pitch ratio (sub-octave, detune or a fifth) and filter brightness.
+const VOICES = {
+  racer: { base: 40, step: 9, range: 62, types: ['sawtooth', 'square'], ratio: 0.503, bright: 1 },
+  buggy: { base: 52, step: 10, range: 70, types: ['square', 'square'], ratio: 0.497, bright: 0.9 },
+  muscle: { base: 30, step: 6, range: 46, types: ['sawtooth', 'sawtooth'], ratio: 0.5, bright: 0.75 },
+  monster: { base: 24, step: 5, range: 36, types: ['sawtooth', 'square'], ratio: 0.25, bright: 0.6 },
+  formula: { base: 72, step: 14, range: 115, types: ['sawtooth', 'triangle'], ratio: 1.006, bright: 1.45 },
+  hyper: { base: 56, step: 12, range: 92, types: ['sawtooth', 'sawtooth'], ratio: 1.498, bright: 1.2 },
+};
+let voice = VOICES.racer;
+function setEngineVoice(id) { voice = VOICES[id] || VOICES.racer; }
+
 function engineOn() {
   if (!ac || eng) return;
   const o1 = ac.createOscillator();
   const o2 = ac.createOscillator();
-  o1.type = 'sawtooth';
-  o2.type = 'square';
+  o1.type = voice.types[0];
+  o2.type = voice.types[1];
   const lp = ac.createBiquadFilter();
   lp.type = 'lowpass';
   lp.frequency.value = 400;
@@ -137,10 +150,11 @@ function engine(pct, gas, nitro, air, wind) {
   const gp = Math.min(pct, 1.4) * gears;
   const gear = Math.min(gears - 1, Math.floor(gp));
   const r = air ? 0.9 : gp - gear;
-  const f = 40 + gear * 9 + r * 62 + (nitro ? 18 : 0) + (air && gas ? 30 : 0);
+  const v = voice;
+  const f = v.base + gear * v.step + r * v.range + (nitro ? 18 : 0) + (air && gas ? 30 : 0);
   eng.o1.frequency.setTargetAtTime(f, t, 0.05);
-  eng.o2.frequency.setTargetAtTime(f * 0.503, t, 0.05);
-  eng.lp.frequency.setTargetAtTime(420 + pct * 1300 + (gas ? 500 : 0), t, 0.06);
+  eng.o2.frequency.setTargetAtTime(f * v.ratio, t, 0.05);
+  eng.lp.frequency.setTargetAtTime((420 + pct * 1300 + (gas ? 500 : 0)) * v.bright, t, 0.06);
   eng.g.gain.setTargetAtTime(0.04 + (gas ? 0.03 : 0) + Math.min(pct, 1) * 0.025, t, 0.08);
   eng.wind.g.gain.setTargetAtTime(wind * 0.16, t, 0.1);
   eng.wind.f.frequency.setTargetAtTime(400 + wind * 900, t, 0.1);
@@ -171,6 +185,9 @@ const sfx = {
   buy() { [784, 988, 1175, 1568].forEach((f, i) => tone(f, 0.14, { type: 'square', vol: 0.06, delay: i * 0.06 })); },
   deny() { tone(220, 0.16, { type: 'square', vol: 0.06, slide: 160 }); },
   tick() { tone(2400, 0.03, { type: 'square', vol: 0.025 }); },
+  overtake() { tone(1175, 0.08, { type: 'square', vol: 0.05 }); tone(1568, 0.14, { type: 'square', vol: 0.05, delay: 0.07 }); },
+  closeCall() { noise(0.35, { vol: 0.2, type: 'bandpass', freq: 3000, slide: 600, q: 2 }); tone(1760, 0.12, { type: 'triangle', vol: 0.07, delay: 0.05 }); },
+  daily() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.18, { type: 'triangle', vol: 0.08, delay: i * 0.07 })); },
   draft() { noise(0.3, { vol: 0.12, type: 'bandpass', freq: 900, slide: 2200, q: 1.2 }); },
   pad() { noise(0.5, { vol: 0.25, type: 'bandpass', freq: 400, slide: 3500, q: 2 }); },
   checkpoint() { tone(988, 0.1, { type: 'square', vol: 0.06 }); tone(1319, 0.18, { type: 'square', vol: 0.06, delay: 0.09 }); },
@@ -265,5 +282,5 @@ function setMuted(reason, v) {
   if (master) master.gain.setTargetAtTime(muteReasons.size ? 0 : 0.85, ac.currentTime, 0.02);
 }
 
-SD.audio = { init, engineOn, engineOff, engine, sfx, setSfx, setMusic, suspend, resume, setMuted };
+SD.audio = { init, engineOn, engineOff, engine, setEngineVoice, sfx, setSfx, setMusic, suspend, resume, setMuted };
 })();

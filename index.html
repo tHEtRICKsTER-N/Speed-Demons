@@ -30,12 +30,14 @@
   <canvas id="game"></canvas>
   <div id="speedlines"></div>
   <div id="vignette"></div>
+  <div id="flash"></div>
 
   <!-- ============ HUD ============ -->
   <div id="hud">
     <div class="hud-box hud-tl">
       <div class="hud-pos"><span id="h-pos">5</span><sup id="h-pos-suf">th</sup><small id="h-pos-of">/5</small></div>
       <div class="hud-coins"><span class="coin-ico"></span><b id="h-coins">0</b></div>
+      <div id="h-callout" class="hud-callout"></div>
     </div>
     <div class="hud-tc">
       <div id="h-time" class="hud-time">0:00.00</div>
@@ -76,6 +78,7 @@
   <!-- ============ Title ============ -->
   <section id="screen-title" class="screen">
     <div class="card title-card">
+      <button id="btn-daily" class="daily-btn" aria-label="Daily reward" hidden>&#127873;<span class="dot"></span></button>
       <div class="wallet"><span class="coin-ico"></span><b id="title-coins">0</b></div>
       <h1 id="title-text" class="logo">Speed Demons</h1>
       <p id="subtitle-text" class="subtitle"></p>
@@ -94,6 +97,20 @@
         <button id="btn-autogas" class="btn toggle"></button>
         <button id="btn-fs" class="btn btn-fs">&#x26F6; Full screen</button>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ Daily reward ============ -->
+  <section id="screen-daily" class="screen">
+    <div class="card daily-card">
+      <h2>&#127873; Daily reward</h2>
+      <p class="daily-sub">Come back every day: the rewards keep growing!</p>
+      <div id="daily-days" class="daily-days"></div>
+      <div class="row wrap">
+        <button id="btn-daily-claim" class="btn primary res-btn" data-primary>Claim</button>
+        <button id="btn-daily-double" class="btn reward res-btn">&#127916; Claim &times;2</button>
+      </div>
+      <button id="btn-daily-close" class="gate-skip daily-later">Later</button>
     </div>
   </section>
 
@@ -122,6 +139,7 @@
       <div id="car-info" class="car-info"></div>
       <div id="car-action" class="car-action"></div>
       <div id="upgrade-list" class="upgrade-list"></div>
+      <div id="garage-free" class="garage-free"></div>
       <div id="color-list" class="color-list"></div>
     </div>
   </section>
@@ -151,7 +169,8 @@
       <ul class="tips">
         <li>&#127942; Land flips, spins and rolls for <b>stunt points</b> and nitro. Chain them for a combo!</li>
         <li><span class="coin-ico"></span> Grab <b>coins</b>, and earn more from stunts and your finishing place. Spend them in the <b>Garage</b> on new cars and upgrades.</li>
-        <li>&#128168; Tuck in right behind a rival to <b>slipstream</b>: it fills your nitro.</li>
+        <li>&#128168; Tuck in right behind a rival to <b>slipstream</b>, and pass them close for a <b>close-pass</b> bonus. Both fill your nitro.</li>
+        <li>&#127873; Come back every day for a bigger <b>daily reward</b>.</li>
         <li>&#11088; Each track has 3 stars: finish, win, and beat the stunt target.</li>
       </ul>
       <button id="btn-howto-back" class="btn primary" data-primary>Got it!</button>

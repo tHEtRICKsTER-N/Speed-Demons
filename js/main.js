@@ -132,7 +132,21 @@ const S = {
   draft: false,
   airHints: 0,
   hintT: 0,
+  slowT: 0, // real seconds of slow motion left (perfect landings)
+  lastPos: 5,
+  testDrive: null, // car id borrowed for one race (rewarded video in the garage)
+  testDriveDone: false,
 };
+
+// The car you race with: your own, or one you're test driving.
+const raceCar = () => S.testDrive || save.car;
+function endTestDrive() {
+  if (S.testDrive && S.testDriveDone) {
+    S.testDrive = null;
+    S.testDriveDone = false;
+  }
+  if (S.playerModel && S.playerModel.typeId !== raceCar()) createPlayer(raceCar());
+}
 
 function disposeTree(obj) {
   obj.traverse((o) => {
@@ -182,7 +196,7 @@ function loadTrack(idx) {
 }
 
 // Build the player's car. carId lets the garage preview cars you don't drive yet.
-function createPlayer(carId = save.car) {
+function createPlayer(carId = raceCar()) {
   if (S.playerModel) {
     scene.remove(S.playerModel.root);
     disposeTree(S.playerModel.root);
@@ -211,6 +225,7 @@ function placeGrid() {
   });
   S.player.reset(tr.startS - 24, 0);
   S.player.update(0, IDLE);
+  for (const a of S.ais) a.wasAhead = a.s > S.player.s;
   S.camSnap = true;
 }
 
@@ -235,6 +250,7 @@ function enterMenu(screen = 'screen-title') {
   S.resultsShown = false;
   platform.gameplay(false);
   loadTrack(save.track);
+  endTestDrive();
   placeGrid();
   input.inGame = false;
   Audio.engineOff();
@@ -256,6 +272,7 @@ async function startRace(withBreak = S.raced) {
   S.starting = false;
   S.raced = true;
   loadTrack(save.track);
+  endTestDrive();
   placeGrid();
   S.mode = 'countdown';
   S.countdown = 3.6;
@@ -264,6 +281,8 @@ async function startRace(withBreak = S.raced) {
   S.paused = false;
   S.resultsShown = false;
   S.draft = false;
+  S.slowT = 0;
+  S.lastPos = S.all.length;
   smoke.clear();
   glow.clear();
   for (const k in hudCache) delete hudCache[k];
@@ -271,6 +290,7 @@ async function startRace(withBreak = S.raced) {
   input.inGame = true;
   input.releaseAll();
   Audio.init();
+  Audio.setEngineVoice(raceCar());
   Audio.engineOn();
   platform.gameplay(true);
   if (!save.tutorial) {
@@ -321,8 +341,13 @@ function finishRace() {
   TRACKS.forEach((t, i) => {
     if (!before.tracks[i] && eco.trackUnlocked(i)) unlocks.push(`New track: ${t.name}`);
   });
+  if (S.testDrive) {
+    const t = eco.carById(S.testDrive);
+    S.testDriveDone = true;
+    if (!eco.owns(t.id)) unlocks.push(`Test drive over. The ${t.name} is ${fmt(t.price)} coins in the Garage`);
+  }
   const affordable = CAR_TYPES.find((t) => !eco.owns(t.id) && t.price <= save.coins);
-  if (affordable) unlocks.push(`You can buy the ${affordable.name} in the Garage!`);
+  if (affordable && !S.testDrive) unlocks.push(`You can buy the ${affordable.name} in the Garage!`);
   S.result = { pos, earned, unlocks, reward };
   S.doubled = false;
   showMsg(pos === 1 ? 'YOU WIN!' : 'FINISH!', 'hold');
@@ -411,8 +436,28 @@ function update(dt) {
       if (!S.draft) Audio.sfx.draft();
     }
     S.draft = drafting;
+    // Close pass: overtake a rival with only a whisker between you, without touching
+    // (cars that rub are pushed exactly 2 m apart by the collision code).
+    for (const a of S.ais) {
+      const ahead = a.s > p.s;
+      const gap = Math.abs(a.d - p.d);
+      if (a.wasAhead && !ahead && p.mode === 'ground' && !a.air && gap > 2.05 && gap < 3.3 && p.v - a.v > 2) {
+        p.score += 100;
+        p.gainNitro(8);
+        popups([{ text: 'CLOSE PASS <b>+100</b>' }]);
+        Audio.sfx.closeCall();
+      }
+      a.wasAhead = ahead;
+    }
     if (p.s >= tr.finishS) finishRace();
-    else S.position = standings().indexOf(p) + 1;
+    else {
+      S.position = standings().indexOf(p) + 1;
+      if (S.position < S.lastPos) {
+        callout(`▲ ${S.position}${suffix(S.position)}`);
+        Audio.sfx.overtake();
+      }
+      S.lastPos = S.position;
+    }
   } else {
     S.draft = false;
   }
@@ -489,6 +534,10 @@ function onPlayerEvent(type, d) {
         popups(lines);
         if (d.trickCount) Audio.sfx.trick(p.combo);
         if (d.clean && d.trickCount) Audio.sfx.perfect();
+        if (d.clean && (d.trickCount >= 2 || d.multiplier >= 2)) {
+          S.slowT = 0.45;
+          flash();
+        }
       }
       break;
     }
@@ -630,7 +679,7 @@ function updateCamera(dt) {
 const hud = {
   root: $('hud'), pos: $('h-pos'), suf: $('h-pos-suf'), of: $('h-pos-of'), time: $('h-time'), score: $('h-score'), combo: $('h-combo'),
   speed: $('h-speed'), nitro: $('nitro'), nitroFill: $('h-nitro'), air: $('h-air'), progress: $('h-progress'), coins: $('h-coins'),
-  draft: $('h-draft'), hint: $('hint'), lines: $('speedlines'),
+  draft: $('h-draft'), hint: $('hint'), lines: $('speedlines'), callout: $('h-callout'), flash: $('flash'),
   touch: $('touch'), vignette: $('vignette'), msg: $('center-msg'), popups: $('popups'), toast: $('toast'),
 };
 const hudCache = {};
@@ -702,6 +751,19 @@ function showHint(html, secs) {
   S.hintT = secs;
 }
 
+function callout(text) {
+  hud.callout.textContent = text;
+  hud.callout.className = 'hud-callout';
+  void hud.callout.offsetWidth;
+  hud.callout.className = 'hud-callout show';
+}
+
+function flash() {
+  hud.flash.className = '';
+  void hud.flash.offsetWidth;
+  hud.flash.className = 'on';
+}
+
 function toast(html) {
   hud.toast.innerHTML = html;
   hud.toast.className = 'toast';
@@ -755,6 +817,7 @@ const starString = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
 
 function refreshMenus() {
   $('title-coins').textContent = fmt(save.coins);
+  $('btn-daily').hidden = !eco.dailyStatus().ready;
   $('star-total').textContent = `${eco.totalStars()} / ${TRACKS.length * 3}`;
   const next = eco.nextTrack();
   $('play-next').innerHTML = `${escapeHtml(TRACKS[next].name)} <span class="stars">${starString(eco.result(next).stars || 0)}</span>`;
@@ -808,21 +871,72 @@ function renderTracks() {
   });
 }
 
+/* ---------------------------------------------------------------- daily reward */
+function openDaily() {
+  const st = eco.dailyStatus();
+  if (!st.ready) return;
+  $('daily-days').innerHTML = st.rewards
+    .map((n, k) => {
+      const cls = k < st.streak - 1 ? 'done' : k === st.streak - 1 ? 'today' : '';
+      return `<div class="day ${cls}"><small>Day ${k + 1}</small><b>${coinHtml(n)}</b>${k < st.streak - 1 ? '<i>✓</i>' : ''}</div>`;
+    })
+    .join('');
+  $('btn-daily-claim').innerHTML = `Claim ${coinHtml(st.reward)}`;
+  const dbl = $('btn-daily-double');
+  dbl.hidden = !platform.hasAds;
+  dbl.disabled = false;
+  dbl.innerHTML = `🎬 Claim ${coinHtml(st.reward * 2)}`;
+  showScreen('screen-daily');
+}
+
+function claimDaily(mult) {
+  const n = eco.claimDaily(mult);
+  if (!n) return;
+  Audio.sfx.daily();
+  toast(`🎁 ${coinHtml(n)} coins!`);
+  showScreen('screen-title');
+  refreshMenus();
+}
+
 /* ---------------------------------------------------------------- garage */
 const garage = { view: 'racer', from: 'screen-title' };
 const STAT_MAX = { top: 72, accel: 36, grip: 42, air: 1.6 };
 
+let freeTimer = null;
 function openGarage(from) {
   garage.from = from;
   garage.view = save.car;
   showScreen('screen-garage');
   renderGarage();
+  clearInterval(freeTimer);
+  freeTimer = setInterval(renderFreeCoins, 1000);
 }
 
 function closeGarage() {
+  clearInterval(freeTimer);
   if (garage.view !== save.car) createPlayer(save.car);
   showScreen(garage.from || 'screen-title');
   refreshMenus();
+}
+
+// Rewarded "free coins" button, with its cooldown shown as a countdown.
+function renderFreeCoins() {
+  const box = $('garage-free');
+  if (!platform.hasAds) {
+    box.innerHTML = '';
+    return;
+  }
+  const wait = eco.freeCoinsWait();
+  const label = wait > 0
+    ? `🎬 Free coins in ${Math.floor(wait / 60000)}:${String(Math.floor(wait / 1000) % 60).padStart(2, '0')}`
+    : `🎬 Free coins +${fmt(eco.freeCoinsAmount())}`;
+  let btn = box.querySelector('button');
+  if (!btn) {
+    box.innerHTML = '<button class="btn reward free-btn" data-free="1"></button>';
+    btn = box.querySelector('button');
+  }
+  btn.textContent = label;
+  btn.disabled = wait > 0;
 }
 
 function renderGarage() {
@@ -845,7 +959,8 @@ function renderGarage() {
   let action;
   if (!owned) {
     const can = save.coins >= t.price;
-    action = `<button class="btn primary buy" data-buy="${id}"${can ? '' : ' disabled'}>Buy ${coinHtml(t.price)}</button>` + (can ? '' : `<div class="need">Need ${fmt(t.price - save.coins)} more coins</div>`);
+    const test = platform.hasAds ? `<button class="btn reward pair" data-test="${id}">🎬 Test drive</button>` : '';
+    action = `<button class="btn primary buy pair" data-buy="${id}"${can ? '' : ' disabled'}>Buy ${coinHtml(t.price)}</button>${test}` + (can ? '' : `<div class="need">Need ${fmt(t.price - save.coins)} more coins${test ? ', or take it for a spin first' : ''}</div>`);
   } else if (id === save.car) {
     action = '<div class="driving">✓ Your car</div>';
   } else {
@@ -865,13 +980,37 @@ function renderGarage() {
     }).join('')
     : '<p class="hint-text">Buy this car to upgrade it.</p>';
 
+  renderFreeCoins();
   $('color-list').innerHTML = COLORS.map((col) => `<button class="swatch${col === save.color ? ' sel' : ''}" style="background:${col}" data-color="${col}" aria-label="Colour ${col}"></button>`).join('');
 }
 
-$('screen-garage').addEventListener('click', (e) => {
-  const el = e.target.closest('[data-car],[data-buy],[data-drive],[data-up],[data-color]');
-  if (!el) return;
+$('screen-garage').addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-car],[data-buy],[data-drive],[data-up],[data-color],[data-test],[data-free]');
+  if (!el || el.disabled) return;
   const d = el.dataset;
+  if (d.test) {
+    el.disabled = true;
+    if (await platform.rewardedBreak()) {
+      clearInterval(freeTimer);
+      S.testDrive = d.test;
+      S.testDriveDone = false;
+      toast(`🏁 One race in the <b>${escapeHtml(eco.carById(d.test).name)}</b>!`);
+      startRace(false); // no ad break right after the video
+    } else el.disabled = false;
+    return;
+  }
+  if (d.free) {
+    el.disabled = true;
+    if (await platform.rewardedBreak()) {
+      const n = eco.claimFreeCoins();
+      if (n) {
+        Audio.sfx.buy();
+        toast(`${coinHtml(n)} free coins!`);
+      }
+    }
+    renderGarage();
+    return;
+  }
   if (d.car) {
     if (d.car !== garage.view) {
       garage.view = d.car;
@@ -1060,6 +1199,15 @@ on('btn-play', () => {
   startRace();
 });
 on('btn-tracks', () => showScreen('screen-tracks'));
+on('btn-daily', openDaily);
+on('btn-daily-claim', () => claimDaily(1));
+on('btn-daily-double', async () => {
+  const b = $('btn-daily-double');
+  b.disabled = true;
+  if (await platform.rewardedBreak()) claimDaily(2);
+  else b.disabled = false;
+});
+on('btn-daily-close', () => showScreen('screen-title'));
 on('btn-garage', () => openGarage('screen-title'));
 on('btn-tracks-garage', () => openGarage('screen-tracks'));
 on('btn-garage-done', closeGarage);
@@ -1152,7 +1300,7 @@ input.on.respawn = () => {
 input.on.primary = clickPrimary;
 input.on.back = () => {
   if (S.screen === 'screen-garage') closeGarage();
-  else if (['screen-tracks', 'screen-howto'].includes(S.screen)) showScreen('screen-title');
+  else if (['screen-tracks', 'screen-howto', 'screen-daily'].includes(S.screen)) showScreen('screen-title');
   else if (S.screen === 'screen-fs-help') showScreen(fsHelpReturn || 'screen-title');
 };
 input.on.fullscreen = toggleFullscreen;
@@ -1221,8 +1369,13 @@ let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
   if (S.adPause) return;
-  const dt = clamp((now - last) / 1000, 0, 0.05);
+  const realDt = clamp((now - last) / 1000, 0, 0.05);
   last = now;
+  let dt = realDt;
+  if (S.slowT > 0 && !S.paused) {
+    S.slowT -= realDt;
+    dt = realDt * 0.35;
+  }
   if (window.innerWidth !== view.winW || window.innerHeight !== view.winH) resize();
   if (!S.paused) {
     const steps = Math.max(1, Math.ceil(dt / (1 / 60) - 0.01));
@@ -1241,7 +1394,7 @@ function frame(now) {
     Audio.engine(p.speed / p.type.top, !air && input.state.gas, p.boosting, air, air ? clamp(p.speed / 60, 0, 1) : 0);
   }
   if (hud.root.classList.contains('show')) updateHUD();
-  perfMonitor(dt);
+  perfMonitor(realDt);
 }
 
 /* ====================================================================== boot */

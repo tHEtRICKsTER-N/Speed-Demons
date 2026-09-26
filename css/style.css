@@ -93,6 +93,9 @@ button { font-family: inherit; }
   animation: lines 0.14s steps(2) infinite;
 }
 #speedlines.on { opacity: 1; }
+#flash { position: absolute; inset: 0; pointer-events: none; background: #fff; opacity: 0; }
+#flash.on { animation: flash 0.45s ease-out; }
+@keyframes flash { 0% { opacity: 0.75; } 100% { opacity: 0; } }
 @keyframes lines { 50% { transform: rotate(1.7deg); } }
 
 .coin-ico {
@@ -208,6 +211,25 @@ button { font-family: inherit; }
 .nitro.full .nitro-ico { animation: pulse 0.8s infinite; }
 .nitro.active #h-nitro { background: linear-gradient(90deg, #fff, #40c8ff); }
 .hud-coins { display: flex; align-items: center; gap: 5px; font-size: clamp(15px, 2.8vmin, 22px); font-weight: 800; color: var(--yellow); margin-top: 2px; }
+.hud-callout {
+  position: absolute;
+  left: 4px;
+  top: 100%;
+  margin-top: 6px;
+  white-space: nowrap;
+  font-size: clamp(14px, 2.6vmin, 20px);
+  font-weight: 800;
+  color: #7dff9b;
+  opacity: 0;
+  min-height: 0;
+}
+.hud-callout.show { animation: callout 1.4s ease-out forwards; }
+@keyframes callout {
+  0% { opacity: 0; transform: translateX(-8px) scale(0.8); }
+  15% { opacity: 1; transform: none; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
 .hud-draft {
   font-size: clamp(11px, 2vmin, 14px);
   font-weight: 800;
@@ -388,6 +410,33 @@ button { font-family: inherit; }
   font-variant-numeric: tabular-nums;
 }
 .title-card > .wallet { position: absolute; top: 12px; right: 14px; }
+.daily-btn {
+  position: absolute;
+  z-index: 2; /* above the logo, whose drop-shadow filter would otherwise paint over it and eat clicks */
+  top: 8px;
+  left: 12px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: #fff4d1;
+  font-size: 24px;
+  cursor: pointer;
+  animation: wiggle 2.4s ease-in-out infinite;
+}
+.daily-btn .dot { position: absolute; top: 4px; right: 4px; width: 10px; height: 10px; border-radius: 50%; background: #ff3b5c; box-shadow: 0 0 0 2px #fff; }
+@keyframes wiggle { 0%, 80%, 100% { transform: rotate(0); } 85% { transform: rotate(-10deg); } 90% { transform: rotate(10deg); } 95% { transform: rotate(-6deg); } }
+.daily-card { max-width: 620px; }
+.daily-sub { margin: -6px 0 10px; color: var(--muted); }
+.daily-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 8px; }
+.day { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border-radius: 12px; background: #f1f4fb; border: 3px solid transparent; }
+.day small { font-size: 11px; color: var(--muted); font-weight: 700; }
+.day b { font-size: 14px; white-space: nowrap; }
+.day.done { opacity: 0.55; }
+.day.done i { position: absolute; top: 2px; right: 5px; font-style: normal; color: #0a9d7a; font-weight: 800; }
+.day.today { background: #fff4d1; border-color: var(--orange); transform: scale(1.06); }
+.day:last-child b { color: #b36b00; }
+.daily-card .daily-later { color: var(--muted); margin-top: 2px; }
 .play-next { margin: -6px 0 6px; font-size: 15px; font-weight: 700; color: var(--muted); }
 .play-next .stars, .world-head .stars { color: #f5a300; letter-spacing: 1px; }
 .fs-help { margin: 0 0 10px; font-size: 15px; line-height: 1.4; }
@@ -497,6 +546,10 @@ button { font-family: inherit; }
 .up-btn:hover { background: #ffeab0; }
 .up-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .maxed { min-width: 76px; text-align: center; font-weight: 800; color: #0a9d7a; }
+.garage-free { text-align: center; }
+.garage-free:empty { display: none; }
+.free-btn { margin: 6px 0 0; padding: 6px 16px; font-size: 14px; }
+.car-action .pair { min-width: 150px; }
 .hint-text { margin: 6px 0; font-size: 13px; color: var(--muted); text-align: center; }
 .btn.buy:disabled { filter: grayscale(0.7); opacity: 0.6; cursor: not-allowed; }
 .color-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 10px 0 6px; }
@@ -623,6 +676,12 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; margin: 0 1px; bor
   .color-list { gap: 6px; margin: 6px 0 2px; }
   .swatch { width: 22px; height: 22px; border-width: 2px; }
   .garage-done { padding: 3px 12px; font-size: 14px; }
+  .car-action .pair { min-width: 120px; }
+  .free-btn { margin-top: 3px; padding: 3px 12px; font-size: 13px; }
+  .daily-days { gap: 4px; margin-bottom: 4px; }
+  .day { padding: 4px 1px; }
+  .day b { font-size: 12px; }
+  .daily-sub { margin: -4px 0 6px; font-size: 14px; }
   .play-next { margin: -4px 0 2px; font-size: 13px; }
   .res-stars { font-size: 30px; }
   .howto-block ul, .tips { font-size: 13px; line-height: 1.45; }

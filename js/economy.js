@@ -38,6 +38,8 @@ function defaults() {
     autoGas: null,
     tutorial: false,
     races: 0,
+    daily: { last: null, streak: 0 },
+    freeAt: 0, // when the garage's free-coins video was last watched (ms)
   };
 }
 
@@ -134,6 +136,38 @@ function raceReward({ pos, coins, score, trackIdx, newStars }) {
   return { lines: lines.filter((l) => l.value > 0), total: lines.reduce((n, l) => n + l.value, 0) };
 }
 
+/* ---- daily reward: a 7-day streak that restarts if you skip a day */
+const DAILY = [100, 150, 200, 300, 400, 500, 1000];
+const dayKey = (t) => {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+};
+function dailyStatus(now = Date.now()) {
+  const d = save.daily || { last: null, streak: 0 };
+  if (d.last === dayKey(now)) return { ready: false, streak: d.streak, reward: 0, rewards: DAILY };
+  const streak = d.last === dayKey(now - 864e5) ? (d.streak % DAILY.length) + 1 : 1;
+  return { ready: true, streak, reward: DAILY[streak - 1], rewards: DAILY };
+}
+function claimDaily(mult = 1, now = Date.now()) {
+  const st = dailyStatus(now);
+  if (!st.ready) return 0;
+  save.daily = { last: dayKey(now), streak: st.streak };
+  addCoins(st.reward * mult);
+  return st.reward * mult;
+}
+
+/* ---- free coins for watching a video in the garage (cooldown so it isn't pushed too often) */
+const FREE_COOLDOWN = 5 * 60 * 1000;
+const freeCoinsAmount = () => Math.min(1000, 150 + totalStars() * 20);
+const freeCoinsWait = (now = Date.now()) => Math.max(0, (save.freeAt || 0) + FREE_COOLDOWN - now);
+function claimFreeCoins(now = Date.now()) {
+  if (freeCoinsWait(now) > 0) return 0;
+  save.freeAt = now;
+  const n = freeCoinsAmount();
+  addCoins(n);
+  return n;
+}
+
 /* ---- tracks & stars */
 const result = (i) => save.results[TRACKS[i].id] || {};
 const totalStars = () => TRACKS.reduce((n, _, i) => n + (result(i).stars || 0), 0);
@@ -151,5 +185,6 @@ SD.economy = {
   save, persist, reload, COIN_VALUE, UPGRADES, MAX_LEVEL,
   carById, carStats, levels, owns, upgradeCost, buyCar, buyUpgrade, addCoins, raceReward,
   result, totalStars, trackUnlocked, nextTrack,
+  dailyStatus, claimDaily, freeCoinsAmount, freeCoinsWait, claimFreeCoins,
 };
 })();

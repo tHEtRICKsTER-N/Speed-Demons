@@ -109,6 +109,7 @@ class CarModel {
   constructor(typeId, color) {
     const spec = MODELS[typeId] || MODELS.racer;
     const S = sharedAssets();
+    this.typeId = typeId;
     this.spec = spec;
     this.root = new THREE.Group();
     this.body = new THREE.Group();
