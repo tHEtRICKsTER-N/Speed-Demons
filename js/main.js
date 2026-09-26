@@ -610,7 +610,7 @@ function lerpV(v, target, k, dt) {
 
 function updateCamera(dt) {
   const p = S.player;
-  if (!p) return;
+  if (!p || S.freeCam) return; // freeCam: a ?debug script is placing the camera (store images)
   if (S.mode === 'menu' || S.mode === 'loading') {
     const garage = S.screen === 'screen-garage';
     cam.orbit += dt * (garage ? 0.35 : 0.12);
@@ -1422,7 +1422,7 @@ async function boot() {
 // Dev hook (only with ?debug in the URL): step the simulation without requestAnimationFrame.
 if (new URLSearchParams(location.search).has('debug')) {
   window.__speedDemons = {
-    S, input, save, eco, platform, startRace, enterMenu,
+    S, input, save, eco, platform, startRace, enterMenu, camera, scene, renderer, smoke, glow, resize,
     step(seconds, draw = true) {
       const h = 1 / 60;
       for (let t = 0; t < seconds; t += h) {
