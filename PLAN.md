@@ -78,9 +78,9 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` planned
 
 ## M5: Store and launch
 
-- [ ] Tune the cover shot in `tools/store-assets.mjs` (camera above and behind, lit side of the car)
-- [ ] CrazyGames preview videos: 15-20 s, 1080p landscape and portrait (2:3), starting on the cover
-- [ ] Poki animated thumbnail
+- [x] Tune the cover shot in `tools/store-assets.mjs` (camera above and behind, lit side of the car)
+- [x] CrazyGames preview videos: 15-20 s, 1080p landscape and portrait (2:3), starting on the cover
+- [x] Poki animated thumbnail
 - [ ] Submit to Poki (web fit test) and CrazyGames (basic launch, then full launch)
 
 ## Later

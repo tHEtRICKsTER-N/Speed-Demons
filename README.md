@@ -71,7 +71,15 @@ python -m http.server 8000
 
 Then open <http://localhost:8000/?platform=crazygames>.
 
-Things the portals ask for that live outside the code: thumbnails and screenshots, a game description, and (Poki) an animated thumbnail.
+The covers, thumbnails and preview videos the portals ask for are rendered from the game itself, in headless Chrome:
+
+```bash
+node tools/store-assets.mjs
+```
+
+It writes them to `dist/store/`: the CrazyGames covers (1920x1080, 800x1200, 800x800) and 18-second silent preview videos (1920x1080 and 1080x1620, opening on the cover), and the Poki thumbnail (1256x1256, no text) and 5-second animated thumbnail (1080x1080, 60 fps). The videos need [ffmpeg](https://ffmpeg.org) on the PATH. Add `images` or `videos` to make only one kind. The shots and clips are listed at the top of `tools/store-assets.mjs` and `tools/store-videos.mjs`; `scout` and `videos preview` render quick contact sheets for choosing them.
+
+The game description and any screenshots still have to be written or picked by hand.
 
 ## Check it
 
@@ -115,7 +123,8 @@ js/input.js     keyboard / touch / gamepad
 js/audio.js     synthesized engine, effects and music
 tools/package.mjs       builds the portal zips
 tools/check.mjs         the sanity check
-tools/store-assets.mjs  renders store images
+tools/store-assets.mjs  renders the store images
+tools/store-videos.mjs  renders the preview videos, frame by frame
 ```
 
 The scripts are plain `<script>` files rather than ES modules, so the page works from `file://`. Each file wraps itself in a function and shares its exports on `window.SD`. `index.html` loads them in dependency order, after `vendor/three.min.js` (a classic-script build of three.js that sets `window.THREE`).

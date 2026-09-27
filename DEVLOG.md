@@ -4,6 +4,25 @@ Newest first. Each entry says what changed, why, and how it was checked. The roa
 
 ---
 
+## 2026-09-27: Store covers and preview videos (M5)
+
+**Covers**
+- The hero shot moved to Magma Mile's second jump: a red Phantom (the icon's colour) against smoking volcanoes, the lit road and the rivals below. The camera now sits above and behind the car, on whichever side the sun lights, so it sees the roof and the lit flank instead of the dark underside. All four images reframe the same moment so the portals' covers match.
+- The nitro flames are off in stills: over a bright sky they burnt out to white spikes.
+- Fixed: the store shots never updated the sky, sun and shadow camera for the frozen frame (the debug `step` skipped them). The `?debug` hook now exposes `world`, `weather` and a `draw()` that renders exactly like the game loop, weather included.
+- `scout` mode renders the hero camera on the first jumps of every track as contact sheets. That's how the shot was picked.
+
+**Preview videos** (`tools/store-videos.mjs`, needs ffmpeg)
+- CrazyGames: 18 s, silent, 1920x1080 (19 MB) and 1080x1620 (17 MB), both well under the 50 MB limit. Each opens on its cover, holds it for a second, then the jump carries on while the camera swings round behind the car. Then five cuts: a loop at sunset, a double backflip in the snow, a corkscrew in Candy Clouds, overtaking from 3rd to 1st in the desert, and a double barrel roll at night.
+- Poki: a 5.4 s, 60 fps, 1080x1080 animated thumbnail (4.9 MB), opening on the Poki thumbnail: the opening, the loop, and the backflip's landing.
+- Rendered frame by frame: each frame steps the race by exactly 1/fps, and every CSS animation (trick popups, callouts, the landing flash) is paused and wound to the same clock. Capture runs slower than real time, but the video plays at true speed.
+- The gameplay HUD stays in; the pause and respawn buttons and the controls hint don't.
+- `videos preview` renders four stills per clip plus a log of every landing (air time, tricks) and crash, for picking clips.
+
+**Checked**
+- Every clip lands cleanly (no crashes).
+- Video lengths, frame rates and sizes match both portals' published limits. The videos are encoded as H.264 `yuv420p` in TV range. They were first written full range from the JPEG frames, which some players show washed out.
+
 ## 2026-09-26: World expansion and visual upgrade (M4)
 
 **Worlds and weather**

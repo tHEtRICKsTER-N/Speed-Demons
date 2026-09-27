@@ -4,6 +4,11 @@
 //
 //   node tools/store-assets.mjs            images (+ videos once tools/store-videos.mjs exists)
 //   node tools/store-assets.mjs images     images only
+//   node tools/store-assets.mjs videos     videos only; 'videos poki' only those whose file name
+//                                          has 'poki', 'videos preview' a few stills per clip
+//   node tools/store-assets.mjs scout 7,12 the hero camera on the first jumps of those tracks
+//                                          ('all' or none: every track), as contact sheets in
+//                                          dist/store/scout/
 //
 // CrazyGames: covers 1920x1080, 800x1200, 800x800 (title only, no other text) and preview
 //             videos 15-20 s, 1080p landscape (16:9) and portrait (2:3), starting on the cover.
@@ -21,15 +26,20 @@ const what = process.argv[2] || 'all';
 fs.mkdirSync(out, { recursive: true });
 
 /* ------------------------------------------------------------------ the shots */
-// A shot: race `track` (index) in `car`/`color`, fly off jump number `jump` doing a backflip,
-// freeze `air` seconds after take-off, and place the camera relative to the car:
-// cam = [ahead, right, up] metres in the car's travel frame, looking at the car (+lookUp).
-const HERO = { track: 7, jump: 1, air: 0.62, car: 'hyper', color: '#ffd400', cam: [5.4, 3.6, -0.9], lookUp: 0.4, lookSide: -1.2, fov: 52 };
+// A shot: race `track` (index) in `car`/`color`, fly off jump number `jump` pitching the nose up
+// to `pitch` radians (the start of a backflip), freeze `air` seconds after take-off, and place the
+// camera relative to the car: cam = [back, side, up] metres behind it along its travel direction,
+// out to the side the sun lights, and above it. It looks at the car raised by `lookUp` and pushed
+// `lookAhead` along its path; `shiftX`/`shiftY` then slide the view so the car sits that many
+// metres right of / above the centre of the picture (to keep it clear of the title).
+// `flames` sizes the nitro flames (0 = off; against a bright sky they burn out to white spikes).
+// Magma Mile's second jump: smoking volcanoes behind, the lit road and the rivals below.
+const HERO = { track: 18, jump: 2, air: 0.62, pitch: 0.6, car: 'hyper', color: '#ff3b5c', cam: [6.5, 4.6, 1.4], lookUp: 0.6, lookAhead: 2, fov: 52, flames: 0 };
 const IMAGES = [
-  { file: 'crazygames-cover-1920x1080.png', w: 1920, h: 1080, title: 'left', shot: { ...HERO, lookSide: -2.6 } },
-  { file: 'crazygames-cover-800x1200.png', w: 800, h: 1200, title: 'top', shot: { ...HERO, cam: [6.2, 3.2, -1.6], lookSide: 0, lookUp: 1.6, fov: 58 } },
-  { file: 'crazygames-cover-800x800.png', w: 800, h: 800, title: 'top', shot: { ...HERO, cam: [6.0, 3.4, -1.3], lookSide: -0.4, lookUp: 1.2, fov: 56 } },
-  { file: 'poki-thumbnail-628x628@2x.png', w: 628, h: 628, title: null, shot: { ...HERO, cam: [5.0, 3.2, -0.9], lookSide: -0.3, lookUp: 0.3, fov: 50 } },
+  { file: 'crazygames-cover-1920x1080.png', w: 1920, h: 1080, title: 'left', shot: { ...HERO, cam: [7, 4.8, 1.4], shiftX: 2.8 } },
+  { file: 'crazygames-cover-800x1200.png', w: 800, h: 1200, title: 'top', shot: { ...HERO, cam: [9, 4.6, 2], shiftX: 1.3, shiftY: -1.1, fov: 58 } },
+  { file: 'crazygames-cover-800x800.png', w: 800, h: 800, title: 'top', shot: { ...HERO, cam: [7, 4.4, 1.6], shiftY: -1.1, fov: 56 } },
+  { file: 'poki-thumbnail-628x628@2x.png', w: 628, h: 628, title: null, shot: { ...HERO, cam: [7.6, 4.8, 1.5], shiftX: 0.9, fov: 52 } },
 ];
 
 /* ------------------------------------------------------------------ browser */
@@ -94,14 +104,15 @@ async function viewport(w, h, dpr) {
 /* ------------------------------------------------------------------ page-side helpers */
 const PAGE_HELPERS = `
 window.__store = {
-  hideUI() {
-    const st = document.createElement('style');
-    st.textContent = '#hud,#touch,.screen,#popups,#center-msg,#toast,#speedlines,#vignette,#flash,#gate,#loading{display:none!important}' +
+  // Hide the menus and buttons, and unless hud is set (gameplay footage) the race HUD too.
+  hideUI(hud = false) {
+    let st = document.getElementById('store-css');
+    if (!st) { st = document.createElement('style'); st.id = 'store-css'; document.head.appendChild(st); }
+    st.textContent = '#touch,.screen,#toast,#gate,#loading,#btn-pause,#btn-respawn,#hint' + (hud ? '' : ',#hud,#popups,#center-msg,#speedlines,#vignette,#flash') + '{display:none!important}' +
       '#promo-title{position:absolute;z-index:60;font-family:"Baloo 2",sans-serif;font-weight:800;font-style:italic;line-height:0.86;letter-spacing:-0.02em;' +
       'background:linear-gradient(180deg,#fff6b0 0%,#ffd23f 30%,#ff7a18 70%,#e0480c 100%);-webkit-background-clip:text;background-clip:text;color:transparent;' +
       '-webkit-text-stroke:0.035em #1b1f3b;filter:drop-shadow(0 0.06em 0 #1b1f3b) drop-shadow(0 0.12em 0.18em rgba(0,0,0,0.45));pointer-events:none}' +
       '#promo-title span{display:block}';
-    document.head.appendChild(st);
   },
   title(layout) {
     let t = document.getElementById('promo-title');
@@ -111,8 +122,9 @@ window.__store = {
     if (layout === 'left') Object.assign(t.style, { left: W * 0.045 + 'px', top: H * 0.07 + 'px', fontSize: H * 0.2 + 'px', textAlign: 'left', right: 'auto' });
     else Object.assign(t.style, { left: '0', right: '0', top: H * 0.045 + 'px', fontSize: Math.min(W * 0.19, H * 0.15) + 'px', textAlign: 'center' });
   },
-  // Race the track and freeze mid-air on the chosen jump, doing a backflip.
-  async fly(shot) {
+  // Start a race on the shot's track with an autopilot that holds the road, uses nitro, and in
+  // the air pitches the nose up until it reaches shot.pitch.
+  async start(shot) {
     const H = __speedDemons, S = H.S;
     S.freeCam = false; S.paused = false;
     H.save.car = shot.car; H.save.color = shot.color; H.save.track = shot.track;
@@ -123,33 +135,59 @@ window.__store = {
       const st = H.input.state;
       st.steer = air ? 0 : Math.max(-1, Math.min(1, -p.d * 0.45 - p.vd * 0.2));
       st.gas = true; st.brake = false; st.nitro = !air && p.nitro > 20;
-      st.pitch = air && p.airTime > 0.12 && Math.abs(p.trickP) < 5.3 ? -1 : 0; st.roll = 0;
+      st.pitch = air && p.airTime > 0.12 && p.trickP < shot.pitch ? -1 : 0; st.roll = 0;
       return st;
     };
-    let jumps = 0, wasAir = false;
-    for (t = 0; t < 120; t += 1 / 60) {
+    this.jumps = 0; this.wasAir = false;
+  },
+  // Drive on until jump number n (counted from the start) is shot.air seconds old.
+  toJump(shot, n) {
+    const H = __speedDemons, S = H.S, p = S.player;
+    S.freeCam = false; S.paused = false;
+    for (let t = 0; t < 120 && S.mode === 'race'; t += 1 / 60) {
       H.step(1 / 60, false);
       const air = p.mode === 'air' && p.fallT === 0 && S.track.isGap(p.s);
-      if (air && !wasAir) jumps++;
-      wasAir = air;
-      if (jumps === shot.jump && air && p.airTime >= shot.air) return true;
+      if (air && !this.wasAir) this.jumps++;
+      this.wasAir = air;
+      if (this.jumps === n && air && p.airTime >= shot.air) return true;
+      if (this.jumps > n) return false;
     }
     return false;
+  },
+  async fly(shot) {
+    await this.start(shot);
+    return this.toJump(shot, shot.jump);
   },
   frame(shot) {
     const H = __speedDemons, S = H.S, p = S.player, cam = H.camera;
     S.paused = true; S.freeCam = true;
     H.glow.clear();
-    const fwd = new THREE.Vector3().copy(p.vel).setY(0).normalize();
     const up = new THREE.Vector3(0, 1, 0);
-    const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    cam.position.copy(p.pos).addScaledVector(fwd, shot.cam[0]).addScaledVector(right, shot.cam[1]).addScaledVector(up, shot.cam[2]);
+    const fwd = new THREE.Vector3().copy(p.vel).setY(0).normalize();
+    const side = new THREE.Vector3().crossVectors(fwd, up).normalize();
+    if (side.dot(H.world.sunDir) < 0) side.negate(); // the camera goes on the sunlit side
+    const [back, out, high] = shot.cam;
+    cam.position.copy(p.pos).addScaledVector(fwd, -back).addScaledVector(side, out).addScaledVector(up, high);
     cam.up.set(0, 1, 0);
     cam.fov = shot.fov;
     cam.updateProjectionMatrix();
-    cam.lookAt(new THREE.Vector3().copy(p.pos).addScaledVector(up, shot.lookUp).addScaledVector(right, shot.lookSide || 0));
-    S.playerModel.flames.forEach((f) => { f.visible = true; f.scale.set(1.15, 1.15, 1.7); });
+    const look = new THREE.Vector3().copy(p.pos).addScaledVector(up, shot.lookUp || 0).addScaledVector(fwd, shot.lookAhead || 0);
+    cam.lookAt(look);
+    cam.updateMatrixWorld();
+    const shift = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).multiplyScalar(-(shot.shiftX || 0))
+      .addScaledVector(new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1), -(shot.shiftY || 0));
+    cam.position.add(shift);
+    cam.updateMatrixWorld();
+    const fl = shot.flames ?? 1; // nitro flame size, 0 = off
+    S.playerModel.flames.forEach((f) => { f.visible = fl > 0; f.scale.set(fl, fl, fl * 1.3); });
+    H.world.update(0, S.time, cam, p.pos); // sun, shadows and sky follow the new camera
+    H.weather.update(0, cam);
     H.renderer.render(H.scene, cam);
+  },
+  label(text) {
+    let l = document.getElementById('scout-label');
+    if (!l) { l = document.createElement('div'); l.id = 'scout-label'; l.style.cssText = 'position:absolute;left:8px;top:6px;z-index:70;font:700 22px sans-serif;color:#fff;text-shadow:0 1px 3px #000'; document.getElementById('app').appendChild(l); }
+    l.textContent = text;
   },
 };
 1`;
@@ -180,11 +218,36 @@ if (what === 'all' || what === 'images') {
   await evaluate('__store.title(null); 1');
 }
 
+// Scout: shoot the hero camera on the first few jumps of each track, to pick the cover shot.
+// An optional JSON argument overrides HERO, e.g. scout 7,12 '{"pitch":0,"car":"rocket"}'.
+if (what === 'scout') {
+  const list = process.argv[3] || 'all';
+  const tracks = list !== 'all' ? list.split(',').map(Number) : await evaluate('SD.tracks.TRACKS.length').then((n) => [...Array(n).keys()]);
+  const shot = { ...HERO, ...JSON.parse(process.argv[4] || '{}') };
+  const dir = path.join(out, 'scout');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(path.join(dir, 'raw'), { recursive: true });
+  await viewport(640, 360, 1);
+  let n = 0;
+  for (const track of tracks) {
+    await evaluate(`__store.start(${JSON.stringify({ ...shot, track })})`);
+    for (let jump = 1; jump <= 3; jump++) {
+      if (!(await evaluate(`__store.toJump(${JSON.stringify(shot)}, ${jump})`))) break;
+      await evaluate(`__store.label('track ${track}  jump ${jump}'); __store.frame(${JSON.stringify(shot)}); 1`);
+      await sleep(150);
+      await capture(path.join(dir, 'raw', String(++n).padStart(3, '0') + '.png'), 640, 360);
+    }
+  }
+  await evaluate(`__store.label(''); 1`);
+  const ff = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', '1', '-i', path.join(dir, 'raw', '%03d.png'), '-vf', 'tile=3x4', path.join(dir, 'sheet-%02d.png')]);
+  console.log(ff.status === 0 ? `dist/store/scout/sheet-*.png  ${n} shots` : `dist/store/scout/raw/  ${n} shots (no ffmpeg for sheets)`);
+}
+
 if (what === 'all' || what === 'videos') {
   const videos = path.join(root, 'tools', 'store-videos.mjs');
   if (fs.existsSync(videos)) {
     const { makeVideos } = await import(pathToFileURL(videos).href);
-    await makeVideos({ evaluate, viewport, capture, out, sleep });
+    await makeVideos({ evaluate, viewport, capture, out, sleep, IMAGES, only: process.argv[3] });
   } else {
     console.log('preview videos: not implemented yet (tools/store-videos.mjs)');
   }

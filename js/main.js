@@ -1478,21 +1478,25 @@ async function boot() {
 // Dev hook (only with ?debug in the URL): step the simulation without requestAnimationFrame.
 if (new URLSearchParams(location.search).has('debug')) {
   window.__speedDemons = {
-    S, input, save, eco, platform, startRace, enterMenu, camera, scene, renderer, smoke, glow, resize,
+    S, input, save, eco, platform, startRace, enterMenu, camera, scene, renderer, smoke, glow, world, weather, resize,
     step(seconds, draw = true) {
       const h = 1 / 60;
-      for (let t = 0; t < seconds; t += h) {
+      const n = Math.max(1, Math.round(seconds / h));
+      for (let i = 0; i < n; i++) {
         update(h);
         smoke.update(h);
         glow.update(h);
         S.trackView.update(h, S.time);
         updateCamera(h);
       }
-      if (draw) {
-        world.update(h, S.time, camera, S.player.pos);
-        renderer.render(scene, camera);
-        updateHUD();
-      }
+      if (draw) this.draw(n * h);
+    },
+    // Render one frame as the game loop does; dt advances the scenery and weather animation.
+    draw(dt = 0) {
+      world.update(dt, S.time, camera, S.player.pos);
+      weather.update(dt, camera);
+      renderer.render(scene, camera);
+      updateHUD();
     },
   };
 }
